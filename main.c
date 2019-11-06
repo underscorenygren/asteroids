@@ -1,0 +1,361 @@
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+
+#include "raylib.h"
+
+const int ASTEROID = 1;
+const int SHIP = 2;
+const bool DEBUG = true;
+
+const int SCREEN_W = 800;
+const int SCREEN_H = 450;
+const int ASTEROID_MAX_SPEED = 10;
+
+const Vector2 ASTEROID_SIZE = {45, 45};
+const Vector2 SHIP_SIZE = {10, 20};
+
+const int MAX_OBJS = 100;
+
+typedef struct Object {
+	float x, y, w, h;
+	Vector2 direction;
+	float speed;
+	int destroyed;
+	int type;
+	bool active;
+} Object;
+
+char *typeToString(Object *obj) {
+	if (obj->type == ASTEROID) {
+		return "ASTEROID";
+	} else if(obj->type == SHIP) {
+		return "SHIP";
+	}
+	return "UNKNOWN";
+}
+
+void printObj(Object *obj) {
+	if (DEBUG) {
+		printf("%s pos: (%f, %f), vel: (%f, %f, %f)\n", typeToString(obj), obj->x, obj->y, obj->speed, obj->direction.x, obj->direction.y);
+	}
+}
+
+void debug(char *msg) {
+	if (DEBUG) {
+		printf("%s\n", msg);
+	}
+}
+
+void points(Object *obj, Vector2 *pts, int *n) {
+	if (obj->type == ASTEROID) {
+		if (n != NULL) {
+			*n = 4;
+		}
+		pts[0].x = obj->x;
+		pts[0].y = obj->y;
+		pts[1].x = obj->x + obj->w;
+		pts[1].y = obj->y;
+		pts[2].x = obj->x + obj->w;
+		pts[2].y = obj->y + obj->h;
+		pts[3].x = obj->x;
+		pts[3].y = obj->y + obj->h;
+	} else {
+		if (n != NULL) {
+			*n = 3;
+		}
+		const float pyth = sqrt(pow(obj->w/2, 2) + pow(obj->h/2, 2));
+		pts[0].x = obj->x;
+		pts[0].y = obj->y;
+		pts[1].x = obj->x + obj->w;
+		pts[1].y = obj->y;
+		pts[2].x = obj->x + pyth;
+		pts[2].y = obj->y + pyth;
+	}
+}
+
+
+void drawObj(Object *obj) {
+	Color col = WHITE;
+	if (obj->destroyed) {
+		col = RED;
+	}
+	if (obj->type == ASTEROID) {
+		DrawRectangleLines(obj->x, obj->y, obj->w, obj->h, col);  // NOTE: Uses QUADS internally, not lines
+	} else if (obj->type == SHIP) {
+		Vector2 verts[3];
+		points(obj, verts, NULL);
+		DrawTriangleLines(
+				verts[0],
+				verts[1],
+				verts[2],
+			col);
+	}
+	printObj(obj);
+}
+
+
+void warpX(Object *obj, float newX) {
+	obj->x = newX;
+	//obj->direction.x = -obj->direction.x;
+}
+
+void warpY(Object *obj, float newY) {
+	obj->y = newY;
+	//obj->direction.y = -obj->direction.y;
+}
+
+void advance(Object *obj) {
+	float dX = obj->speed * obj->direction.x;
+	float dY = obj->speed * obj->direction.y;
+
+	debug("advancing");
+	obj->x = dX + obj->x;
+	obj->y = dY + obj->y;
+	printObj(obj);
+}
+
+bool checkCollide(Object *o1, Object *o2) {
+	Vector2 verts[4];
+	int n;
+
+	if (!o1->active || !o2->active) {
+		return false;
+	}
+
+	points(o1, verts, &n);
+
+	for (int i = 0; i < n; i++) {
+		Vector2 point = verts[i];
+		if (o2->type == ASTEROID) {
+			Rectangle rec = {o2->x, o2->y, o2->w, o2->h};
+			if (CheckCollisionPointRec(point, rec)) {
+				return true;
+			}
+		} else {
+			Vector2 tv[3];
+			points(o2, tv, NULL);
+			if (CheckCollisionPointTriangle(point, tv[0], tv[1], tv[2])) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+void handleOffscreen(Object *obj) {
+	//We only warp one direction at a time,
+	//because it's easier, and render loop will fix the other on
+	//next iteration
+	//
+	Vector2 verts[4];
+	int n;
+	points(obj, verts, &n);
+	int buf = 5;
+
+	for (int i = 0; i < n; i++) {
+		Vector2 point = verts[i];
+		if (point.x < 0) {
+			warpX(obj, SCREEN_W - obj->w - buf);
+			return;
+		} else if (point.x > SCREEN_W) {
+			warpX(obj, buf);
+			return;
+		} else if (point.y < 0) {
+			warpY(obj, SCREEN_H - obj->h - buf);
+			return;
+		} else if (point.y > SCREEN_H) {
+			warpY(obj, buf);
+			return;
+		}
+	}
+}
+
+Object *firstCollider(Object *objs, Object *o) {
+	for (int j = 0; j < MAX_OBJS; j++) {
+		Object *oj = &objs[j];
+		if (o != oj) {
+			if (checkCollide(o, oj)) {
+				return oj;
+			}
+		}
+	}
+	return NULL;
+}
+
+void handleCollisions(Object *objs) {
+	for (int i = 0; i < MAX_OBJS; i++) {
+		Object *oi = &objs[i];
+		Object *oj = firstCollider(objs, oi);
+		if (oj != NULL) {
+			oi->destroyed = true;
+			oj->destroyed = true;
+		}
+	}
+}
+
+float randfloat(float a) {
+	float res = (float)rand()/((float)(RAND_MAX/a));
+	assert(res > 0.0);
+	assert(res <= a);
+	return  res;
+}
+
+Vector2 randomPosition() {
+	Vector2 v = {SCREEN_W * randfloat(1.0), SCREEN_H * randfloat(1.0)};
+	return v;
+}
+
+Vector2 randomDirection() {
+	float angle = 360.0 * randfloat(1.0);
+	Vector2 v = {
+		cos(angle) - sin(angle),
+		sin(angle) + cos(angle)
+	};
+
+	return v;
+}
+
+
+void addObject(Object *objs, int type) {
+	Object *obj, *ref = NULL;
+	int w, h;
+	int speed = 0;
+	bool free_obj_found = false;
+	Vector2 size, pos;
+	Vector2	direction = randomDirection();
+
+	if (type == ASTEROID) {
+		size = ASTEROID_SIZE;
+		speed = ASTEROID_MAX_SPEED * randfloat(1.0);
+	} else {
+		size = SHIP_SIZE;
+	}
+
+	for (int i = 0; i < MAX_OBJS; i++) {
+		ref = &objs[i];
+		if (!ref->active) {
+			obj = ref;
+			break;
+		}
+	}
+
+	if (obj == NULL) {
+		debug("no free object slots");
+	} else {
+		obj->w = size.x;
+		obj->h = size.y;
+		obj->speed = speed;
+		obj->destroyed = 0;
+		obj->type = type;
+		obj->active = true;
+		obj->direction = direction;
+	}
+
+	while (true) {
+		pos = randomPosition();
+		obj->x = pos.x;
+		obj->y = pos.y;
+		if (firstCollider(objs, obj) == NULL) {
+			debug("adding object");
+			printObj(obj);
+			break;
+		} else {
+			debug("failed collision test, retrying placement");
+		}
+	}
+}
+
+void handleKeyPress(Object *obj) {
+	if (obj->type != SHIP) {
+		return;
+	}
+
+	if (IsKeyDown(KEY_RIGHT)) ballPosition.x += 2.0f;
+	if (IsKeyDown(KEY_LEFT)) ballPosition.x -= 2.0f;
+	if (IsKeyDown(KEY_UP)) ballPosition.y -= 2.0f;
+	if (IsKeyDown(KEY_DOWN)) ballPosition.y += 2.0f;
+
+}
+
+int main(void)
+{
+    // Initialization
+    //--------------------------------------------------------------------------------------
+		const int fps = 5;
+		int nAsteroids = 2;
+
+		const int speed = 10;
+
+		int rounds = 0;
+		int maxRounds = 2;
+
+		Object objs[MAX_OBJS];
+		for (int i = 0; i < MAX_OBJS; i++) {
+			objs[i].active = 0;
+		}
+
+		addObject(objs, SHIP);
+		for (int i = 0; i < nAsteroids; i++) {
+			addObject(objs, ASTEROID);
+		}
+
+		Object objPtr = *objs;
+
+    InitWindow(SCREEN_W, SCREEN_H, "Asteroid BATTLE!");
+
+    SetTargetFPS(fps);               // Set our game to run at 60 frames-per-second
+    //--------------------------------------------------------------------------------------
+
+    // Main game loop
+    while (!WindowShouldClose())    // Detect window close button or ESC key
+    {
+
+			//if (rounds++ > maxRounds) break;
+
+        // Update
+        //----------------------------------------------------------------------------------
+        // TODO: Update your variables here
+        //----------------------------------------------------------------------------------
+
+        // Draw
+        //----------------------------------------------------------------------------------
+        BeginDrawing();
+
+        ClearBackground(BLACK);
+
+					debug("--BEGIN--");
+
+					//drawRect(50, 50, 100, 200);
+					//drawRect(100, 0, 10, 20);
+					//drawObj(&o2);
+
+					for (int i = 0; i < MAX_OBJS; i++) {
+
+						if (objs[i].active) {
+							debug("drawing");
+
+							drawObj(&objs[i]);
+
+							advance(&objs[i]); //NB must pass by reference
+
+							handleOffscreen(&objs[i]);
+
+							handleKeyPress(&objs[i]);
+						}
+					}
+
+					handleCollisions(objs);
+
+        EndDrawing();
+        //----------------------------------------------------------------------------------
+    }
+
+    // De-Initialization
+    //--------------------------------------------------------------------------------------
+    CloseWindow();        // Close window and OpenGL context
+    //--------------------------------------------------------------------------------------
+
+    return 0;
+}
