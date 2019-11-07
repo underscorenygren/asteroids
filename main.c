@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <time.h>
 
 #include "raylib.h"
 
@@ -19,9 +20,8 @@ const Vector2 SHIP_SIZE = {10, 20};
 const int MAX_OBJS = 100;
 
 typedef struct Object {
-	float x, y, w, h;
+	float x, y, w, h, speed, angle;
 	Vector2 direction;
-	float speed;
 	int destroyed;
 	int type;
 	bool active;
@@ -86,11 +86,13 @@ void drawObj(Object *obj) {
 	} else if (obj->type == SHIP) {
 		Vector2 verts[3];
 		points(obj, verts, NULL);
-		DrawTriangleLines(
+		DrawPoly(verts[0], 3, obj->w, obj->angle, col);
+		/*DrawTriangleLines(
 				verts[0],
 				verts[1],
 				verts[2],
 			col);
+			*/
 	}
 	printObj(obj);
 }
@@ -107,12 +109,10 @@ void warpY(Object *obj, float newY) {
 }
 
 void advance(Object *obj) {
-	float dX = obj->speed * obj->direction.x;
-	float dY = obj->speed * obj->direction.y;
-
 	debug("advancing");
-	obj->x = dX + obj->x;
-	obj->y = dY + obj->y;
+	Vector2 av = {obj->direction.x * obj->speed, obj->direction.y * obj->speed};
+	obj->x = av.x + obj->x;
+	obj->y = av.y + obj->y;
 	printObj(obj);
 }
 
@@ -202,21 +202,30 @@ float randfloat(float a) {
 	return  res;
 }
 
+bool randprob(float a) {
+	int res = rand();
+	return (float)res < RAND_MAX * a;
+}
+
 Vector2 randomPosition() {
 	Vector2 v = {SCREEN_W * randfloat(1.0), SCREEN_H * randfloat(1.0)};
 	return v;
 }
 
-Vector2 randomDirection() {
-	float angle = 360.0 * randfloat(1.0);
-	Vector2 v = {
-		cos(angle) - sin(angle),
-		sin(angle) + cos(angle)
-	};
+Vector2 rotate(Vector2 v, int angle) {
+	float newX = (v.x * cos(angle*DEG2RAD)) - (v.y * sin(angle*DEG2RAD));
+	float newY = (v.x * sin(angle*DEG2RAD)) + (v.y * cos(angle*DEG2RAD));
 
-	return v;
+	Vector2 res = {newX, newY};
+	return res;
 }
 
+Vector2 randomDirection() {
+	float angle = 360.0 * randfloat(1.0);
+	Vector2 v = {1.0, 0.0};
+
+	return rotate(v, angle);
+}
 
 void addObject(Object *objs, int type) {
 	Object *obj, *ref = NULL;
@@ -246,6 +255,7 @@ void addObject(Object *objs, int type) {
 	} else {
 		obj->w = size.x;
 		obj->h = size.y;
+		obj->angle = 0;
 		obj->speed = speed;
 		obj->destroyed = 0;
 		obj->type = type;
@@ -267,36 +277,78 @@ void addObject(Object *objs, int type) {
 	}
 }
 
+void adjustAngle(Object *obj, int amount) {
+	obj->angle += amount;
+	if (obj->angle > 360) {
+		obj->angle -= 360;
+	}
+	if (obj->angle < 0) {
+		obj->angle += 360;
+	}
+	obj->direction = rotate(obj->direction, amount);
+}
+
 void handleKeyPress(Object *obj) {
+	const int angMom = 3;
+	float speedMom = 0.5;
+
 	if (obj->type != SHIP) {
 		return;
 	}
 
-	if (IsKeyDown(KEY_RIGHT)) ballPosition.x += 2.0f;
-	if (IsKeyDown(KEY_LEFT)) ballPosition.x -= 2.0f;
-	if (IsKeyDown(KEY_UP)) ballPosition.y -= 2.0f;
-	if (IsKeyDown(KEY_DOWN)) ballPosition.y += 2.0f;
-
+	if (IsKeyDown(KEY_RIGHT)) {
+		adjustAngle(obj, angMom);
+	}
+	if (IsKeyDown(KEY_LEFT)) {
+		adjustAngle(obj, -angMom);
+	}
+	if (IsKeyDown(KEY_UP)) {
+		obj->speed = obj->speed + speedMom;
+	}
+	if (IsKeyDown(KEY_DOWN)) {
+		obj->speed = obj->speed - speedMom;
+	}
 }
+
+int countObjects(Object *objs, int type) {
+	int res = 0;
+	for (int i = 0; i < MAX_OBJS; i++) {
+		if (objs[i].active && objs[i].type == type) {
+			res += 1;
+		}
+	}
+	return res;
+}
+
+void handleDestruction(Object *objs) {
+	int destructThreshold = 5;
+	for (int i = 0; i < MAX_OBJS; i++) {
+		if (objs[i].active &&
+				objs[i].destroyed > 0) {
+			if (objs[i].destroyed++ > destructThreshold) {
+				objs[i].active = 0;
+			}
+		}
+	}
+}
+
 
 int main(void)
 {
     // Initialization
     //--------------------------------------------------------------------------------------
-		const int fps = 5;
-		int nAsteroids = 2;
-
-		const int speed = 10;
-
-		int rounds = 0;
-		int maxRounds = 2;
+		const int fps = 30;
+		int nAsteroids = 2, maxAsteroids = 10;
+		float expAsteroidSpawnPerSec = 1;
+		float asteroidSpawnP = expAsteroidSpawnPerSec / fps;
+		bool spawnShip = false;
+		int spawnTime = time(NULL);
 
 		Object objs[MAX_OBJS];
 		for (int i = 0; i < MAX_OBJS; i++) {
 			objs[i].active = 0;
 		}
 
-		addObject(objs, SHIP);
 		for (int i = 0; i < nAsteroids; i++) {
 			addObject(objs, ASTEROID);
 		}
@@ -311,45 +363,60 @@ int main(void)
     // Main game loop
     while (!WindowShouldClose())    // Detect window close button or ESC key
     {
+			// Update
+			//----------------------------------------------------------------------------------
+			// TODO: Update your variables here
+			//----------------------------------------------------------------------------------
 
-			//if (rounds++ > maxRounds) break;
+			// Draw
+			//----------------------------------------------------------------------------------
+			BeginDrawing();
 
-        // Update
-        //----------------------------------------------------------------------------------
-        // TODO: Update your variables here
-        //----------------------------------------------------------------------------------
+			ClearBackground(BLACK);
 
-        // Draw
-        //----------------------------------------------------------------------------------
-        BeginDrawing();
+				if (spawnShip) {
+					addObject(objs, SHIP);
+					spawnShip = false;
+				}
 
-        ClearBackground(BLACK);
+				debug("--BEGIN--");
 
-					debug("--BEGIN--");
+				for (int i = 0; i < MAX_OBJS; i++) {
 
-					//drawRect(50, 50, 100, 200);
-					//drawRect(100, 0, 10, 20);
-					//drawObj(&o2);
+					if (objs[i].active) {
+						debug("drawing");
 
-					for (int i = 0; i < MAX_OBJS; i++) {
+						drawObj(&objs[i]);
 
-						if (objs[i].active) {
-							debug("drawing");
+						advance(&objs[i]); //NB must pass by reference
 
-							drawObj(&objs[i]);
+						handleOffscreen(&objs[i]);
 
-							advance(&objs[i]); //NB must pass by reference
-
-							handleOffscreen(&objs[i]);
-
-							handleKeyPress(&objs[i]);
-						}
+						handleKeyPress(&objs[i]);
 					}
+				}
 
-					handleCollisions(objs);
+				handleCollisions(objs);
 
-        EndDrawing();
-        //----------------------------------------------------------------------------------
+				if (randprob(asteroidSpawnP)) {
+					debug("spawn asteroid triggered");
+
+					if (countObjects(objs, ASTEROID) < maxAsteroids) {
+						addObject(objs, ASTEROID);
+					} else {
+						debug("not spawning b/c max asteroids");
+					}
+				}
+
+				handleDestruction(objs);
+
+				if (IsKeyPressed(KEY_O) && time(NULL) - spawnTime > 1) {
+					spawnShip = true;
+					spawnTime = time(NULL);
+				}
+
+			EndDrawing();
+			//----------------------------------------------------------------------------------
     }
 
     // De-Initialization
