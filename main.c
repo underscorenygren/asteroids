@@ -456,7 +456,7 @@ void respawnShips(GameState *state) {
 		Object *obj = &state->objs[i];
 		if (obj->active &&
 				obj->type == SHIP &&
-				isObjDestroyed(obj),
+				isObjDestroyed(obj) &&
 				isOutsideSpawnGuard(obj, SHIP)) {
 			activateObject(state->objs, obj);
 		}
