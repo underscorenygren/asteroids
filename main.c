@@ -10,14 +10,22 @@
 
 #define MAX_PLAYERS 8
 
-#define SHIP_SPAWN_GUARD 1
+#define SHIP_SPAWN_GUARD 3
+#define ANGULAR_MOVEMENT 3
+#define SPEED_MOVEMENT 0.5f
+#define REMOTE_MULTIPLIER 3
+
+#define DEBUG false
+#define INFO true
+
+#define DLOG(f_, ...) (DEBUG ? printf((f_), ##__VA_ARGS__), printf("\n") : 0)
+#define ILOG(f_, ...) (INFO ? printf((f_), ##__VA_ARGS__), printf("\n") : 0)
 
 const int ASTEROID = 1;
 const int SHIP = 2;
-const bool DEBUG = false;
 
 const int SCREEN_W = 800;
-const int SCREEN_H = 450;
+const int SCREEN_H = (SCREEN_W / 2);
 const int ASTEROID_MAX_SPEED = 10;
 
 const Vector2 ASTEROID_SIZE = {45, 45};
@@ -44,6 +52,15 @@ typedef struct GameState {
 	Player players[MAX_PLAYERS];
 	Object objs[MAX_OBJS];
 } GameState;
+
+typedef enum ShipAction {
+	NO_ACTION = 0,
+	TURN_LEFT = 1,
+	TURN_RIGHT = 2,
+	SPEED_UP = 3,
+	SPEED_DOWN = 4,
+	SHOOT = 5,
+} ShipAction;
 
 char *typeToString(Object *obj) {
 	if (obj->type == ASTEROID) {
@@ -126,15 +143,7 @@ void objDestroy(Object *obj) {
 
 
 void printObj(Object *obj) {
-	if (DEBUG) {
-		printf("%s pos: (%f, %f), vel: (%f, %f, %f)\n", typeToString(obj), obj->x, obj->y, obj->speed, obj->direction.x, obj->direction.y);
-	}
-}
-
-void debug(char *msg) {
-	if (DEBUG) {
-		printf("%s\n", msg);
-	}
+	DLOG("%s pos: (%f, %f), vel: (%f, %f, %f)\n", typeToString(obj), obj->x, obj->y, obj->speed, obj->direction.x, obj->direction.y);
 }
 
 bool checkCollide(Object *o1, Object *o2) {
@@ -193,7 +202,7 @@ Object* activateObject(Object *objs, Object *obj) {
 	}
 
 	if (obj == NULL) {
-		debug("no free object slots");
+		DLOG("no free object slots");
 		return NULL;
 	} else {
 		obj->w = size.x;
@@ -212,11 +221,11 @@ Object* activateObject(Object *objs, Object *obj) {
 		obj->x = pos.x;
 		obj->y = pos.y;
 		if (firstCollider(objs, obj) == NULL) {
-			debug("adding object");
+			DLOG("adding object");
 			printObj(obj);
 			break;
 		} else {
-			debug("failed collision test, retrying placement");
+			DLOG("failed collision test, retrying placement");
 		}
 	}
 	return obj;
@@ -250,9 +259,12 @@ int countPlayers(GameState *state) {
 Player* addPlayer(GameState *state, ParsecGuest *guest) {
 	for (int i = 0; i < MAX_PLAYERS; i++) {
 		if (!state->players[i].active) {
-			memcpy(&(state->players[i].guest), guest, sizeof(ParsecGuest));
+			if (guest != NULL) {
+				memcpy(&(state->players[i].guest), guest, sizeof(ParsecGuest));
+			}
 			Object *ship = addObject(state->objs, SHIP);
 			state->players[i].ship = ship;
+			state->players[i].active = true;
 			if (ship == NULL) {
 				return NULL;
 			}
@@ -262,19 +274,41 @@ Player* addPlayer(GameState *state, ParsecGuest *guest) {
 	return NULL;
 }
 
-bool removePlayer(GameState *state, ParsecGuest *guest) {
+Object* guestToShip(GameState *state, ParsecGuest *guest) {
 	for (int i = 0; i < MAX_PLAYERS; i++) {
+		Player *player = &state->players[i];
 		if (state->players[i].active &&
 				state->players[i].guest.id == guest->id) {
-			state->players[i].active = false;
-			if (state->players[i].ship != NULL) {
-				state->players[i].ship->active = false;
-				state->players[i].ship = NULL;
-			}
-			return true;
+			return state->players[i].ship;
 		}
 	}
-	return false;
+	return NULL;
+}
+
+Player* shipToPlayer(GameState *state, Object *obj) {
+	if (obj == NULL) {
+		return NULL;
+	}
+	for (int i = 0; i < MAX_PLAYERS; i++) {
+		Player *player = &state->players[i];
+		if (player->ship == obj) {
+			return player;
+		}
+	}
+	return NULL;
+}
+
+bool removePlayer(GameState *state, Object *obj) {
+	Player *player = shipToPlayer(state, obj);
+	if (player == NULL) {
+		return false;
+	}
+	player->active = false;
+	player->ship = NULL;
+	if (obj != NULL) {
+		obj->active = false;
+	}
+	return true;
 }
 
 void drawObj(Object *obj) {
@@ -310,7 +344,7 @@ void warpY(Object *obj, float newY) {
 }
 
 void advance(Object *obj) {
-	debug("advancing");
+	DLOG("advancing");
 	Vector2 av = {obj->direction.x * obj->speed, obj->direction.y * obj->speed};
 	obj->x = av.x + obj->x;
 	obj->y = av.y + obj->y;
@@ -367,25 +401,58 @@ void adjustAngle(Object *obj, int amount) {
 	obj->direction = rotate(obj->direction, amount);
 }
 
+void adjustSpeed(Object *obj, float amount) {
+	obj->speed += amount;
+}
+
+void takeShipAction(Object *obj, ShipAction action, bool local) {
+
+	switch (action) {
+		case TURN_LEFT:
+			ILOG("turning left");
+			adjustAngle(obj, -ANGULAR_MOVEMENT * REMOTE_MULTIPLIER);
+			break;
+		case TURN_RIGHT:
+			ILOG("turning right");
+			adjustAngle(obj, ANGULAR_MOVEMENT * REMOTE_MULTIPLIER);
+			break;
+		case SPEED_UP:
+			ILOG("speeding up");
+			adjustSpeed(obj, SPEED_MOVEMENT * REMOTE_MULTIPLIER);
+			break;
+		case SPEED_DOWN:
+			ILOG("speeding down");
+			adjustSpeed(obj, -SPEED_MOVEMENT * REMOTE_MULTIPLIER);
+			break;
+		default:
+			break;
+	}
+}
+
+
 void handleKeyPress(Object *obj) {
-	const int angMom = 3;
-	float speedMom = 0.5;
+	ShipAction action = NO_ACTION;
 
 	if (obj->type != SHIP) {
 		return;
 	}
 
 	if (IsKeyDown(KEY_RIGHT)) {
-		adjustAngle(obj, angMom);
+		action = TURN_RIGHT;
 	}
 	if (IsKeyDown(KEY_LEFT)) {
-		adjustAngle(obj, -angMom);
+		action = TURN_LEFT;
 	}
 	if (IsKeyDown(KEY_UP)) {
-		obj->speed = obj->speed + speedMom;
+		action = SPEED_UP;
 	}
 	if (IsKeyDown(KEY_DOWN)) {
-		obj->speed = obj->speed - speedMom;
+		action = SPEED_DOWN;
+	}
+
+	if (action != NO_ACTION) {
+		DLOG("local action");
+		takeShipAction(obj, action, true);
 	}
 }
 
@@ -400,9 +467,6 @@ int countObjects(Object *objs, int type) {
 }
 
 bool isOutsideSpawnGuard(Object *obj, int type) {
-	if (type == SHIP) {
-		return time(NULL) - obj->spawnTime > SHIP_SPAWN_GUARD;
-	}
 	return true;
 }
 
@@ -420,18 +484,18 @@ void handleDestruction(Object *objs) {
 }
 
 void guest_state_change(GameState *state, ParsecGuest *guest) {
-	printf("guest state change %d %d %d\n", guest->state, GUEST_CONNECTED, GUEST_DISCONNECTED);
+	ILOG("guest state change %d %d %d", guest->state, GUEST_CONNECTED, GUEST_DISCONNECTED);
 	if (guest->state == GUEST_CONNECTED) {
 		if (addPlayer(state, guest) != NULL) {
-			printf("added player\n");
+			ILOG("added player id: %d", guest->id);
 		} else {
-			printf("failed to add player\n");
+			ILOG("failed to add player");
 		}
 	} else if (guest->state == GUEST_DISCONNECTED) {
-		if (removePlayer(state, guest)) {
-			printf("removed player\n");
+		if (removePlayer(state, guestToShip(state, guest))) {
+			ILOG("removed player id: %d", guest->id);
 		} else {
-			printf("failed to remove player\n");
+			ILOG("failed to remove player");
 		}
 	}
 }
@@ -463,6 +527,80 @@ void respawnShips(GameState *state) {
 	}
 }
 
+void handleInput(GameState *state, ParsecGuest *guest, ParsecMessage *msg) {
+	ShipAction action = NO_ACTION;
+	Object *ship = guestToShip(state, guest);
+	ILOG("handling input for [%d] %d", guest->id, msg->type);
+	if (ship == NULL) {
+		ILOG("no ship for guest");
+		return;
+	}
+
+	if (msg->type == MESSAGE_KEYBOARD) {
+		ILOG("keyboard event");
+		switch (msg->keyboard.code) {
+			case PARSEC_KEY_W:
+			case PARSEC_KEY_UP:
+				action = SPEED_UP;
+				break;
+			case PARSEC_KEY_S:
+			case PARSEC_KEY_DOWN:
+				action = SPEED_DOWN;
+				break;
+			case PARSEC_KEY_A:
+			case PARSEC_KEY_LEFT:
+				action = TURN_LEFT;
+				break;
+			case PARSEC_KEY_D:
+			case PARSEC_KEY_RIGHT:
+				action = TURN_RIGHT;
+				break;
+			case PARSEC_KEY_SPACE:
+				action = SHOOT;
+				break;
+			default:
+				break;
+		}
+	} else if (msg->type == MESSAGE_GAMEPAD_BUTTON) {
+		ILOG("gamepad button event");
+		switch (msg->gamepadButton.button) {
+			case GAMEPAD_BUTTON_A:
+				action = SHOOT;
+				break;
+			case GAMEPAD_BUTTON_DPAD_UP:
+				action = SPEED_UP;
+				break;
+			case GAMEPAD_BUTTON_DPAD_DOWN:
+			case GAMEPAD_BUTTON_B:
+				action = SPEED_DOWN;
+				break;
+			case GAMEPAD_BUTTON_DPAD_LEFT:
+				action = TURN_LEFT;
+				break;
+			case GAMEPAD_BUTTON_DPAD_RIGHT:
+				action = TURN_RIGHT;
+				break;
+			default:
+				break;
+		}
+	} else if (msg->type == MESSAGE_GAMEPAD_AXIS) {
+		ParsecGamepadAxisMessage *pm = &msg->gamepadAxis;
+	}
+
+	takeShipAction(ship, action, false);
+}
+
+void kickGuests(GameState *state, Parsec *parsec) {
+	for (int i = 0; i < MAX_PLAYERS; i++) {
+		Player *player = &state->players[i];
+		if (player->active) {
+			ILOG("kicking player id: %d", player->guest.id);
+			ParsecHostKickGuest(parsec, player->guest.id);
+		}
+	}
+}
+
+
 int main(int argc, char *argv[])
 {
     // Initialization
@@ -473,6 +611,8 @@ int main(int argc, char *argv[])
 		float asteroidSpawnP = expAsteroidSpawnPerSec / fps;
 		Parsec *parsec;
 		char *session;
+
+		Player *localPlayer;
 
 		SetTraceLogLevel(LOG_WARNING);
 		GameState state;
@@ -486,12 +626,13 @@ int main(int argc, char *argv[])
 		session = argv[1];
 
 		if (PARSEC_OK != ParsecInit(PARSEC_VER, NULL, NULL, &parsec)) {
-			printf("Couldn't init parsec");
+			ILOG("Couldn't init parsec");
 			return 1;
 		}
 
 		if (PARSEC_OK != ParsecHostStart(parsec, HOST_GAME, NULL, session)) {
-			printf("Couldn't start hosting");
+			ILOG("Couldn't start hosting");
+			return 1;
 		}
 
 		for (int i = 0; i < MAX_OBJS; i++) {
@@ -523,12 +664,22 @@ int main(int argc, char *argv[])
 
 			ClearBackground(BLACK);
 
-				debug("--BEGIN--");
+				DLOG("--BEGIN--");
+
+				if (IsKeyDown(KEY_O) && localPlayer == NULL) {
+					ILOG("adding local player");
+					localPlayer = addPlayer(&state, NULL);
+				}
+				if (IsKeyDown(KEY_U) && localPlayer != NULL) {
+					ILOG("removing local player");
+					removePlayer(&state, localPlayer->ship);
+					localPlayer = NULL;
+				}
 
 				for (int i = 0; i < MAX_OBJS; i++) {
 
 					if (objs[i].active) {
-						debug("drawing");
+						DLOG("drawing");
 
 						drawObj(&objs[i]);
 
@@ -543,12 +694,12 @@ int main(int argc, char *argv[])
 				handleCollisions(objs);
 
 				if (randprob(asteroidSpawnP)) {
-					debug("spawn asteroid triggered");
+					DLOG("spawn asteroid triggered");
 
 					if (countObjects(objs, ASTEROID) < maxAsteroids) {
 						addObject(objs, ASTEROID);
 					} else {
-						debug("not spawning b/c max asteroids");
+						DLOG("not spawning b/c max asteroids");
 					}
 				}
 
@@ -564,12 +715,18 @@ int main(int argc, char *argv[])
 				if (event.type == HOST_EVENT_GUEST_STATE_CHANGE)
 					guest_state_change(&state, &event.guestStateChange.guest);
 			}
+
+			ParsecGuest guest;
+			for (ParsecMessage msg; ParsecHostPollInput(parsec, 0, &guest, &msg);) {
+				handleInput(&state, &guest, &msg);
+			}
     }
 
     // De-Initialization
     //--------------------------------------------------------------------------------------
     CloseWindow();        // Close window and OpenGL context
     //--------------------------------------------------------------------------------------
+		kickGuests(&state, parsec);
 		ParsecHostStop(parsec);
 
     return 0;
