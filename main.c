@@ -3,12 +3,18 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <time.h>
+#include <string.h>
 
 #include "raylib.h"
+#include "parsec.h"
+
+#define MAX_PLAYERS 8
+
+#define SHIP_SPAWN_GUARD 1
 
 const int ASTEROID = 1;
 const int SHIP = 2;
-const bool DEBUG = true;
+const bool DEBUG = false;
 
 const int SCREEN_W = 800;
 const int SCREEN_H = 450;
@@ -24,8 +30,20 @@ typedef struct Object {
 	Vector2 direction;
 	int destroyed;
 	int type;
+	int spawnTime;
 	bool active;
 } Object;
+
+typedef struct Player {
+	ParsecGuest guest;
+	Object *ship;
+	bool active;
+} Player;
+
+typedef struct GameState {
+	Player players[MAX_PLAYERS];
+	Object objs[MAX_OBJS];
+} GameState;
 
 char *typeToString(Object *obj) {
 	if (obj->type == ASTEROID) {
@@ -36,16 +54,36 @@ char *typeToString(Object *obj) {
 	return "UNKNOWN";
 }
 
-void printObj(Object *obj) {
-	if (DEBUG) {
-		printf("%s pos: (%f, %f), vel: (%f, %f, %f)\n", typeToString(obj), obj->x, obj->y, obj->speed, obj->direction.x, obj->direction.y);
-	}
+float randfloat(float a) {
+	float res = (float)rand()/((float)(RAND_MAX/a));
+	assert(res > 0.0);
+	assert(res <= a);
+	return  res;
 }
 
-void debug(char *msg) {
-	if (DEBUG) {
-		printf("%s\n", msg);
-	}
+bool randprob(float a) {
+	int res = rand();
+	return (float)res < RAND_MAX * a;
+}
+
+Vector2 randomPosition() {
+	Vector2 v = {SCREEN_W * randfloat(1.0), SCREEN_H * randfloat(1.0)};
+	return v;
+}
+
+Vector2 rotate(Vector2 v, int angle) {
+	float newX = (v.x * cos(angle*DEG2RAD)) - (v.y * sin(angle*DEG2RAD));
+	float newY = (v.x * sin(angle*DEG2RAD)) + (v.y * cos(angle*DEG2RAD));
+
+	Vector2 res = {newX, newY};
+	return res;
+}
+
+Vector2 randomDirection() {
+	float angle = 360.0 * randfloat(1.0);
+	Vector2 v = {1.0, 0.0};
+
+	return rotate(v, angle);
 }
 
 void points(Object *obj, Vector2 *pts, int *n) {
@@ -76,9 +114,172 @@ void points(Object *obj, Vector2 *pts, int *n) {
 }
 
 
+bool isObjDestroyed(Object *obj) {
+	return obj->destroyed > 0;
+}
+
+void objDestroy(Object *obj) {
+	if (!isObjDestroyed(obj)) {
+		obj->destroyed = 1;
+	}
+}
+
+
+void printObj(Object *obj) {
+	if (DEBUG) {
+		printf("%s pos: (%f, %f), vel: (%f, %f, %f)\n", typeToString(obj), obj->x, obj->y, obj->speed, obj->direction.x, obj->direction.y);
+	}
+}
+
+void debug(char *msg) {
+	if (DEBUG) {
+		printf("%s\n", msg);
+	}
+}
+
+bool checkCollide(Object *o1, Object *o2) {
+	Vector2 verts[4];
+	int n;
+
+	if (!o1->active || !o2->active) {
+		return false;
+	}
+
+	points(o1, verts, &n);
+
+	for (int i = 0; i < n; i++) {
+		Vector2 point = verts[i];
+		if (o2->type == ASTEROID) {
+			Rectangle rec = {o2->x, o2->y, o2->w, o2->h};
+			if (CheckCollisionPointRec(point, rec)) {
+				return true;
+			}
+		} else {
+			Vector2 tv[3];
+			points(o2, tv, NULL);
+			if (CheckCollisionPointTriangle(point, tv[0], tv[1], tv[2])) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+
+Object *firstCollider(Object *objs, Object *o) {
+	for (int j = 0; j < MAX_OBJS; j++) {
+		Object *oj = &objs[j];
+		if (o != oj) {
+			if (checkCollide(o, oj)) {
+				return oj;
+			}
+		}
+	}
+	return NULL;
+}
+
+Object* activateObject(Object *objs, Object *obj) {
+
+	int speed = 0;
+	int type = obj->type;
+	Vector2 size, pos;
+	Vector2	direction = randomDirection();
+
+	if (type == ASTEROID) {
+		size = ASTEROID_SIZE;
+		speed = ASTEROID_MAX_SPEED * randfloat(1.0);
+	} else {
+		size = SHIP_SIZE;
+	}
+
+	if (obj == NULL) {
+		debug("no free object slots");
+		return NULL;
+	} else {
+		obj->w = size.x;
+		obj->h = size.y;
+		obj->angle = 0;
+		obj->speed = speed;
+		obj->destroyed = 0;
+		obj->type = type;
+		obj->active = true;
+		obj->direction = direction;
+		obj->spawnTime = time(NULL);
+	}
+
+	while (true) {
+		pos = randomPosition();
+		obj->x = pos.x;
+		obj->y = pos.y;
+		if (firstCollider(objs, obj) == NULL) {
+			debug("adding object");
+			printObj(obj);
+			break;
+		} else {
+			debug("failed collision test, retrying placement");
+		}
+	}
+	return obj;
+}
+
+Object* addObject(Object *objs, int type) {
+	Object *obj, *ref = NULL;
+
+	for (int i = 0; i < MAX_OBJS; i++) {
+		ref = &objs[i];
+		if (!ref->active) {
+			obj = ref;
+			break;
+		}
+	}
+
+	obj->type = type;
+
+	return activateObject(objs, obj);
+}
+
+
+int countPlayers(GameState *state) {
+	int res = 0;
+	for (int i = 0; i < MAX_PLAYERS; i++) {
+		if (state->players[i].active) { res++; }
+	}
+	return res;
+}
+
+Player* addPlayer(GameState *state, ParsecGuest *guest) {
+	for (int i = 0; i < MAX_PLAYERS; i++) {
+		if (!state->players[i].active) {
+			memcpy(&(state->players[i].guest), guest, sizeof(ParsecGuest));
+			Object *ship = addObject(state->objs, SHIP);
+			state->players[i].ship = ship;
+			if (ship == NULL) {
+				return NULL;
+			}
+
+			return &(state->players[i]); }
+	}
+	return NULL;
+}
+
+bool removePlayer(GameState *state, ParsecGuest *guest) {
+	for (int i = 0; i < MAX_PLAYERS; i++) {
+		if (state->players[i].active &&
+				state->players[i].guest.id == guest->id) {
+			state->players[i].active = false;
+			if (state->players[i].ship != NULL) {
+				state->players[i].ship->active = false;
+				state->players[i].ship = NULL;
+			}
+			return true;
+		}
+	}
+	return false;
+}
+
 void drawObj(Object *obj) {
 	Color col = WHITE;
-	if (obj->destroyed) {
+	if (isObjDestroyed(obj)) {
 		col = RED;
 	}
 	if (obj->type == ASTEROID) {
@@ -116,34 +317,6 @@ void advance(Object *obj) {
 	printObj(obj);
 }
 
-bool checkCollide(Object *o1, Object *o2) {
-	Vector2 verts[4];
-	int n;
-
-	if (!o1->active || !o2->active) {
-		return false;
-	}
-
-	points(o1, verts, &n);
-
-	for (int i = 0; i < n; i++) {
-		Vector2 point = verts[i];
-		if (o2->type == ASTEROID) {
-			Rectangle rec = {o2->x, o2->y, o2->w, o2->h};
-			if (CheckCollisionPointRec(point, rec)) {
-				return true;
-			}
-		} else {
-			Vector2 tv[3];
-			points(o2, tv, NULL);
-			if (CheckCollisionPointTriangle(point, tv[0], tv[1], tv[2])) {
-				return true;
-			}
-		}
-	}
-	return false;
-}
-
 void handleOffscreen(Object *obj) {
 	//We only warp one direction at a time,
 	//because it's easier, and render loop will fix the other on
@@ -172,107 +345,13 @@ void handleOffscreen(Object *obj) {
 	}
 }
 
-Object *firstCollider(Object *objs, Object *o) {
-	for (int j = 0; j < MAX_OBJS; j++) {
-		Object *oj = &objs[j];
-		if (o != oj) {
-			if (checkCollide(o, oj)) {
-				return oj;
-			}
-		}
-	}
-	return NULL;
-}
-
 void handleCollisions(Object *objs) {
 	for (int i = 0; i < MAX_OBJS; i++) {
 		Object *oi = &objs[i];
 		Object *oj = firstCollider(objs, oi);
 		if (oj != NULL) {
-			oi->destroyed = true;
-			oj->destroyed = true;
-		}
-	}
-}
-
-float randfloat(float a) {
-	float res = (float)rand()/((float)(RAND_MAX/a));
-	assert(res > 0.0);
-	assert(res <= a);
-	return  res;
-}
-
-bool randprob(float a) {
-	int res = rand();
-	return (float)res < RAND_MAX * a;
-}
-
-Vector2 randomPosition() {
-	Vector2 v = {SCREEN_W * randfloat(1.0), SCREEN_H * randfloat(1.0)};
-	return v;
-}
-
-Vector2 rotate(Vector2 v, int angle) {
-	float newX = (v.x * cos(angle*DEG2RAD)) - (v.y * sin(angle*DEG2RAD));
-	float newY = (v.x * sin(angle*DEG2RAD)) + (v.y * cos(angle*DEG2RAD));
-
-	Vector2 res = {newX, newY};
-	return res;
-}
-
-Vector2 randomDirection() {
-	float angle = 360.0 * randfloat(1.0);
-	Vector2 v = {1.0, 0.0};
-
-	return rotate(v, angle);
-}
-
-void addObject(Object *objs, int type) {
-	Object *obj, *ref = NULL;
-	int w, h;
-	int speed = 0;
-	bool free_obj_found = false;
-	Vector2 size, pos;
-	Vector2	direction = randomDirection();
-
-	if (type == ASTEROID) {
-		size = ASTEROID_SIZE;
-		speed = ASTEROID_MAX_SPEED * randfloat(1.0);
-	} else {
-		size = SHIP_SIZE;
-	}
-
-	for (int i = 0; i < MAX_OBJS; i++) {
-		ref = &objs[i];
-		if (!ref->active) {
-			obj = ref;
-			break;
-		}
-	}
-
-	if (obj == NULL) {
-		debug("no free object slots");
-	} else {
-		obj->w = size.x;
-		obj->h = size.y;
-		obj->angle = 0;
-		obj->speed = speed;
-		obj->destroyed = 0;
-		obj->type = type;
-		obj->active = true;
-		obj->direction = direction;
-	}
-
-	while (true) {
-		pos = randomPosition();
-		obj->x = pos.x;
-		obj->y = pos.y;
-		if (firstCollider(objs, obj) == NULL) {
-			debug("adding object");
-			printObj(obj);
-			break;
-		} else {
-			debug("failed collision test, retrying placement");
+			objDestroy(oi);
+			objDestroy(oj);
 		}
 	}
 }
@@ -320,20 +399,71 @@ int countObjects(Object *objs, int type) {
 	return res;
 }
 
+bool isOutsideSpawnGuard(Object *obj, int type) {
+	if (type == SHIP) {
+		return time(NULL) - obj->spawnTime > SHIP_SPAWN_GUARD;
+	}
+	return true;
+}
+
 void handleDestruction(Object *objs) {
 	int destructThreshold = 5;
 	for (int i = 0; i < MAX_OBJS; i++) {
 		if (objs[i].active &&
-				objs[i].destroyed > 0) {
+				isObjDestroyed(&objs[i])) {
 			if (objs[i].destroyed++ > destructThreshold) {
 				objs[i].active = 0;
+				objs[i].spawnTime = time(NULL);
 			}
 		}
 	}
 }
 
+void guest_state_change(GameState *state, ParsecGuest *guest) {
+	printf("guest state change %d %d %d\n", guest->state, GUEST_CONNECTED, GUEST_DISCONNECTED);
+	if (guest->state == GUEST_CONNECTED) {
+		if (addPlayer(state, guest) != NULL) {
+			printf("added player\n");
+		} else {
+			printf("failed to add player\n");
+		}
+	} else if (guest->state == GUEST_DISCONNECTED) {
+		if (removePlayer(state, guest)) {
+			printf("removed player\n");
+		} else {
+			printf("failed to remove player\n");
+		}
+	}
+}
 
-int main(void)
+
+void submitHostFrameBuffer(Parsec *parsec) {
+  if (!parsec)
+    return;
+  ParsecGuest* guests;
+  ParsecHostGetGuests(parsec, GUEST_CONNECTED, &guests);
+  if (&guests[0] != NULL) {
+    Image image = GetScreenData();
+    ImageFlipVertical(&image);
+    Texture2D tex = LoadTextureFromImage(image);
+    ParsecHostGLSubmitFrame(parsec, tex.id);
+  }
+  ParsecFree(guests);
+}
+
+void respawnShips(GameState *state) {
+	for (int i = 0; i < MAX_OBJS; i++) {
+		Object *obj = &state->objs[i];
+		if (obj->active &&
+				obj->type == SHIP &&
+				isObjDestroyed(obj),
+				isOutsideSpawnGuard(obj, SHIP)) {
+			activateObject(state->objs, obj);
+		}
+	}
+}
+
+int main(int argc, char *argv[])
 {
     // Initialization
     //--------------------------------------------------------------------------------------
@@ -341,10 +471,29 @@ int main(void)
 		int nAsteroids = 2, maxAsteroids = 10;
 		float expAsteroidSpawnPerSec = 1;
 		float asteroidSpawnP = expAsteroidSpawnPerSec / fps;
-		bool spawnShip = false;
-		int spawnTime = time(NULL);
+		Parsec *parsec;
+		char *session;
 
-		Object objs[MAX_OBJS];
+		SetTraceLogLevel(LOG_WARNING);
+		GameState state;
+		Object *objs = &state.objs[0];
+
+		if (argc < 2) {
+			printf("Usage: ./ [session-id]\n");
+			return 1;
+		}
+
+		session = argv[1];
+
+		if (PARSEC_OK != ParsecInit(PARSEC_VER, NULL, NULL, &parsec)) {
+			printf("Couldn't init parsec");
+			return 1;
+		}
+
+		if (PARSEC_OK != ParsecHostStart(parsec, HOST_GAME, NULL, session)) {
+			printf("Couldn't start hosting");
+		}
+
 		for (int i = 0; i < MAX_OBJS; i++) {
 			objs[i].active = 0;
 		}
@@ -373,11 +522,6 @@ int main(void)
 			BeginDrawing();
 
 			ClearBackground(BLACK);
-
-				if (spawnShip) {
-					addObject(objs, SHIP);
-					spawnShip = false;
-				}
 
 				debug("--BEGIN--");
 
@@ -409,20 +553,24 @@ int main(void)
 				}
 
 				handleDestruction(objs);
-
-				if (IsKeyPressed(KEY_O) && time(NULL) - spawnTime > 1) {
-					spawnShip = true;
-					spawnTime = time(NULL);
-				}
+				respawnShips(&state);
 
 			EndDrawing();
 			//----------------------------------------------------------------------------------
+			//
+			submitHostFrameBuffer(parsec);
+
+			for (ParsecHostEvent event; ParsecHostPollEvents(parsec, 0, &event);) {
+				if (event.type == HOST_EVENT_GUEST_STATE_CHANGE)
+					guest_state_change(&state, &event.guestStateChange.guest);
+			}
     }
 
     // De-Initialization
     //--------------------------------------------------------------------------------------
     CloseWindow();        // Close window and OpenGL context
     //--------------------------------------------------------------------------------------
+		ParsecHostStop(parsec);
 
     return 0;
 }

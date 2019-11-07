@@ -1,10 +1,10 @@
 compile: clean game
 
 run: compile
-	./game
+	./game $(SESSION)
 
 clean:
 	rm -f game
 
 game:
-	cc main.c `pkg-config --libs --cflags raylib` -o game
+	gcc main.c -L./ -lraylib -lparsec -o game
