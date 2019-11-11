@@ -23,22 +23,25 @@
 
 const int ASTEROID = 1;
 const int SHIP = 2;
+const int MISSILE = 3;
 
 const int SCREEN_W = 800;
 const int SCREEN_H = (SCREEN_W / 2);
-const int ASTEROID_MAX_SPEED = 10;
 
-const Vector2 ASTEROID_SIZE = {45, 45};
-const Vector2 SHIP_SIZE = {10, 20};
-
+const int ASTEROID_MAX_SPEED = 10.0;
 const int MAX_OBJS = 100;
+const int MISSILE_SPEED = 20.0;
+const float MISSILE_RADIUS = 1.0;
+
+const Vector2 ASTEROID_SIZE = {45.0, 45.0};
+const Vector2 SHIP_SIZE = {10.0, 20.0};
+const Vector2 MISSILE_SIZE = {MISSILE_RADIUS, MISSILE_RADIUS};
 
 typedef struct Object {
 	float x, y, w, h, speed, angle;
 	Vector2 direction;
 	int destroyed;
 	int type;
-	int spawnTime;
 	bool active;
 } Object;
 
@@ -67,6 +70,8 @@ char *typeToString(Object *obj) {
 		return "ASTEROID";
 	} else if(obj->type == SHIP) {
 		return "SHIP";
+	} else if (obj->type == MISSILE) {
+		return "MISSILE";
 	}
 	return "UNKNOWN";
 }
@@ -103,6 +108,10 @@ Vector2 randomDirection() {
 	return rotate(v, angle);
 }
 
+bool isVectorEqual(Vector2 v1, Vector2 v2) {
+	return v1.x == v2.x && v1.y == v2.y;
+}
+
 void points(Object *obj, Vector2 *pts, int *n) {
 	if (obj->type == ASTEROID) {
 		if (n != NULL) {
@@ -116,7 +125,7 @@ void points(Object *obj, Vector2 *pts, int *n) {
 		pts[2].y = obj->y + obj->h;
 		pts[3].x = obj->x;
 		pts[3].y = obj->y + obj->h;
-	} else {
+	} else if (obj->type == SHIP) {
 		if (n != NULL) {
 			*n = 3;
 		}
@@ -127,6 +136,14 @@ void points(Object *obj, Vector2 *pts, int *n) {
 		pts[1].y = obj->y;
 		pts[2].x = obj->x + pyth;
 		pts[2].y = obj->y + pyth;
+	} else if (obj->type == MISSILE) {
+		if (n != NULL) {
+			*n = 1;
+		}
+		pts[0].x = obj->x;
+		pts[0].y = obj->y;
+	} else {
+		ILOG("cannot points from unknown type %d", obj->type);
 	}
 }
 
@@ -163,12 +180,21 @@ bool checkCollide(Object *o1, Object *o2) {
 			if (CheckCollisionPointRec(point, rec)) {
 				return true;
 			}
-		} else {
+		} else if (o2->type == SHIP) {
 			Vector2 tv[3];
 			points(o2, tv, NULL);
 			if (CheckCollisionPointTriangle(point, tv[0], tv[1], tv[2])) {
 				return true;
 			}
+		} else if (o2->type == MISSILE) {
+			Vector2 missile;
+			missile.x = o2->x;
+			missile.y = o2->y;
+			if (isVectorEqual(point, missile)) {
+				return true;
+			}
+		} else {
+			ILOG("cannot check collisions for unknown type %d", o2->type);
 		}
 	}
 	return false;
@@ -187,34 +213,46 @@ Object *firstCollider(Object *objs, Object *o) {
 	return NULL;
 }
 
-Object* activateObject(Object *objs, Object *obj) {
+void initObject(Object *obj, int type, float speed, Vector2 direction, Vector2 size, Vector2 pos) {
+	obj->w = size.x;
+	obj->h = size.y;
+	obj->angle = 0;
+	obj->speed = speed;
+	obj->destroyed = 0;
+	obj->type = type;
+	obj->active = true;
+	obj->direction = direction;
+	obj->x = pos.x;
+	obj->y = pos.y;
+	ILOG("[%s] (%f, %f)", typeToString(obj), obj->x, obj->y);
+}
+
+
+Object* activateObject(Object *objs, Object *obj, int type) {
 
 	int speed = 0;
-	int type = obj->type;
 	Vector2 size, pos;
 	Vector2	direction = randomDirection();
+
+	if (obj == NULL) {
+		DLOG("cannot activate null object");
+		return NULL;
+	}
 
 	if (type == ASTEROID) {
 		size = ASTEROID_SIZE;
 		speed = ASTEROID_MAX_SPEED * randfloat(1.0);
-	} else {
+	} else if (type == SHIP) {
 		size = SHIP_SIZE;
+	} else if (type == MISSILE) {
+		size.x = MISSILE_RADIUS;
+		size.y = MISSILE_RADIUS;
+	} else {
+		ILOG("Cannot activate unknown object type %d", type);
 	}
 
-	if (obj == NULL) {
-		DLOG("no free object slots");
-		return NULL;
-	} else {
-		obj->w = size.x;
-		obj->h = size.y;
-		obj->angle = 0;
-		obj->speed = speed;
-		obj->destroyed = 0;
-		obj->type = type;
-		obj->active = true;
-		obj->direction = direction;
-		obj->spawnTime = time(NULL);
-	}
+	//pos inited to 0 here, will get randomly placed
+	initObject(obj, type, speed, direction, size, pos);
 
 	while (true) {
 		pos = randomPosition();
@@ -231,7 +269,7 @@ Object* activateObject(Object *objs, Object *obj) {
 	return obj;
 }
 
-Object* addObject(Object *objs, int type) {
+Object *getFreeObject(Object *objs) {
 	Object *obj, *ref = NULL;
 
 	for (int i = 0; i < MAX_OBJS; i++) {
@@ -241,10 +279,49 @@ Object* addObject(Object *objs, int type) {
 			break;
 		}
 	}
+	return obj;
+}
 
-	obj->type = type;
+Object* addObject(Object *objs, int type) {
+	Object *obj = getFreeObject(objs);
+	if (obj == NULL) {
+		return NULL;
+	}
 
-	return activateObject(objs, obj);
+	return activateObject(objs, obj, type);
+}
+
+Object *addMissile(Object *objs, Object *ship) {
+	Object *obj = getFreeObject(objs);
+	if (obj == NULL) {
+		return NULL;
+	}
+	//middle of ship, vector radiating out in direction of length
+	Vector2 mid = {
+		ship->x + SHIP_SIZE.x/2,
+		ship->y + SHIP_SIZE.y/2};
+
+	float scaling = sqrt(pow(SHIP_SIZE.x, 2) + pow(SHIP_SIZE.y, 2));
+
+	//adds vector of ship length to mid point origin.
+	//this takes rotation of ship already into account
+	Vector2 dir = {
+		scaling * ship->direction.x,
+		scaling * ship->direction.y,
+	};
+
+	Vector2 pos = {
+		mid.x + dir.x,
+		mid.y + dir.y,
+	};
+
+	ILOG("ship at: (%f, %f)", ship->x, ship->y);
+	ILOG("mid at: (%f, %f)", mid.x, mid.y);
+	ILOG("direction (%f, %f)", ship->direction.x, ship->direction.y);
+	ILOG("pos at (%f, %f)", pos.x, pos.y);
+	initObject(obj, MISSILE, MISSILE_SPEED, ship->direction, MISSILE_SIZE, pos);
+
+	return obj;
 }
 
 
@@ -328,6 +405,10 @@ void drawObj(Object *obj) {
 				verts[2],
 			col);
 			*/
+	} else if (obj->type == MISSILE) {
+		DrawCircle(obj->x, obj->y, obj->w, col);
+	} else {
+		ILOG("cannot draw unrecognized type %d", obj->type);
 	}
 	printObj(obj);
 }
@@ -405,7 +486,7 @@ void adjustSpeed(Object *obj, float amount) {
 	obj->speed += amount;
 }
 
-void takeShipAction(Object *obj, ShipAction action, bool local) {
+void takeShipAction(GameState *state, Object *obj, ShipAction action, bool local) {
 
 	switch (action) {
 		case TURN_LEFT:
@@ -424,13 +505,17 @@ void takeShipAction(Object *obj, ShipAction action, bool local) {
 			ILOG("speeding down");
 			adjustSpeed(obj, -SPEED_MOVEMENT * REMOTE_MULTIPLIER);
 			break;
+		case SHOOT:
+			ILOG("shooting");
+			addMissile(state->objs, obj);
 		default:
+			DLOG("Unkown action %d", action);
 			break;
 	}
 }
 
 
-void handleKeyPress(Object *obj) {
+void handleKeyPress(GameState *state, Object *obj) {
 	ShipAction action = NO_ACTION;
 
 	if (obj->type != SHIP) {
@@ -449,10 +534,13 @@ void handleKeyPress(Object *obj) {
 	if (IsKeyDown(KEY_DOWN)) {
 		action = SPEED_DOWN;
 	}
+	if (IsKeyDown(KEY_SPACE)) {
+		action = SHOOT;
+	}
 
 	if (action != NO_ACTION) {
 		DLOG("local action");
-		takeShipAction(obj, action, true);
+		takeShipAction(state, obj, action, true);
 	}
 }
 
@@ -477,7 +565,6 @@ void handleDestruction(Object *objs) {
 				isObjDestroyed(&objs[i])) {
 			if (objs[i].destroyed++ > destructThreshold) {
 				objs[i].active = 0;
-				objs[i].spawnTime = time(NULL);
 			}
 		}
 	}
@@ -522,7 +609,7 @@ void respawnShips(GameState *state) {
 				obj->type == SHIP &&
 				isObjDestroyed(obj) &&
 				isOutsideSpawnGuard(obj, SHIP)) {
-			activateObject(state->objs, obj);
+			activateObject(state->objs, obj, SHIP);
 		}
 	}
 }
@@ -587,7 +674,7 @@ void handleInput(GameState *state, ParsecGuest *guest, ParsecMessage *msg) {
 		ParsecGamepadAxisMessage *pm = &msg->gamepadAxis;
 	}
 
-	takeShipAction(ship, action, false);
+	takeShipAction(state, ship, action, false);
 }
 
 void kickGuests(GameState *state, Parsec *parsec) {
@@ -687,7 +774,7 @@ int main(int argc, char *argv[])
 
 						handleOffscreen(&objs[i]);
 
-						handleKeyPress(&objs[i]);
+						handleKeyPress(&state, &objs[i]);
 					}
 				}
 
