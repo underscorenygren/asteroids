@@ -25,17 +25,30 @@ const int ASTEROID = 1;
 const int SHIP = 2;
 const int MISSILE = 3;
 
-const int SCREEN_W = 800;
-const int SCREEN_H = (SCREEN_W / 2);
+const int SCREEN_W = 1600;
+const int SCREEN_H = (2 * SCREEN_W / 3);
 
 const int ASTEROID_MAX_SPEED = 10.0;
+const int N_START_ASTEROIDS = 10;
+const int MAX_ASTEROIDS = 30;
+const float EXPECTED_ASTEROIDS_PER_SEC = 2;
+
 const int MAX_OBJS = 100;
 const int MISSILE_SPEED = 20.0;
 const float MISSILE_RADIUS = 1.0;
+const float MISSILE_ANGLE_OFFSET = 0.0;
 
 const Vector2 ASTEROID_SIZE = {45.0, 45.0};
-const Vector2 SHIP_SIZE = {10.0, 20.0};
+const Vector2 SHIP_SIZE = {20.0, 20.0};
 const Vector2 MISSILE_SIZE = {MISSILE_RADIUS, MISSILE_RADIUS};
+
+//We use types to index into, beware the segfault
+int DESTRUCTION_THRESHOLDS[] = {
+	0, //ignored
+	5, //ASTEROID
+	3, //SHIP
+	0, //MISSILE
+};
 
 typedef struct Object {
 	float x, y, w, h, speed, angle;
@@ -88,9 +101,8 @@ bool randprob(float a) {
 	return (float)res < RAND_MAX * a;
 }
 
-Vector2 randomPosition() {
-	Vector2 v = {SCREEN_W * randfloat(1.0), SCREEN_H * randfloat(1.0)};
-	return v;
+float randangle() {
+	return 360.0 * randfloat(1.0);
 }
 
 Vector2 rotate(Vector2 v, int angle) {
@@ -101,8 +113,34 @@ Vector2 rotate(Vector2 v, int angle) {
 	return res;
 }
 
+Vector2 translate(Vector2 v, Vector2 translation) {
+	v.x = v.x - translation.x;
+	v.y = v.y - translation.y;
+	return v;
+}
+
+/*
+Vector2 randomPosition() {
+	Vector2 v = { 100, 100};
+	return v;
+}
+
+*/
+
+Vector2 fixedDirection() {
+	float angle = 45;
+	Vector2 v = {1.0, 0.0};
+
+	return rotate(v, angle);
+}
+
+Vector2 randomPosition() {
+	Vector2 v = {SCREEN_W * randfloat(1.0), SCREEN_H * randfloat(1.0)};
+	return v;
+}
+
 Vector2 randomDirection() {
-	float angle = 360.0 * randfloat(1.0);
+	float angle = randangle();
 	Vector2 v = {1.0, 0.0};
 
 	return rotate(v, angle);
@@ -112,11 +150,34 @@ bool isVectorEqual(Vector2 v1, Vector2 v2) {
 	return v1.x == v2.x && v1.y == v2.y;
 }
 
+Vector2 objMid(Object *obj) {
+	Vector2 v = {obj->x + obj->w/2, obj->y + obj->h/2};
+	return v;
+}
+
+void rotateAroundCenter(Object *obj, Vector2 *pts, int n) {
+	Vector2 mid = objMid(obj);
+	Vector2 inv = {-mid.x, -mid.y};
+	for (int i = 0; i < n; i++) {
+		DLOG("rotating (%f, %f), %f", pts[i].x, pts[i].y, obj->angle);
+		Vector2 res =
+			translate(
+				rotate(
+					translate(pts[i], mid),
+				obj->angle),
+			inv);
+		pts[i].x = res.x;
+		pts[i].y = res.y;
+		DLOG("rotated (%f, %f)", pts[i].x, pts[i].y);
+	}
+}
+
 void points(Object *obj, Vector2 *pts, int *n) {
+	int m = 0;
+	int *ms = (n == NULL) ? &m : n;
+
 	if (obj->type == ASTEROID) {
-		if (n != NULL) {
-			*n = 4;
-		}
+		*ms = 4;
 		pts[0].x = obj->x;
 		pts[0].y = obj->y;
 		pts[1].x = obj->x + obj->w;
@@ -126,27 +187,25 @@ void points(Object *obj, Vector2 *pts, int *n) {
 		pts[3].x = obj->x;
 		pts[3].y = obj->y + obj->h;
 	} else if (obj->type == SHIP) {
-		if (n != NULL) {
-			*n = 3;
-		}
-		const float pyth = sqrt(pow(obj->w/2, 2) + pow(obj->h/2, 2));
-		pts[0].x = obj->x;
+		*ms = 3;
+		//const float pyth = sqrt(pow(obj->w/2, 2) + pow(obj->h/2, 2));
+		pts[0].x = obj->x + obj->w/2;
 		pts[0].y = obj->y;
-		pts[1].x = obj->x + obj->w;
-		pts[1].y = obj->y;
-		pts[2].x = obj->x + pyth;
-		pts[2].y = obj->y + pyth;
+		pts[1].x = obj->x;
+		pts[1].y = obj->y + obj->h/2;
+		pts[2].x = obj->x + obj->w;
+		pts[2].y = obj->y + obj->h;
 	} else if (obj->type == MISSILE) {
-		if (n != NULL) {
-			*n = 1;
-		}
+		*ms = 1;
 		pts[0].x = obj->x;
 		pts[0].y = obj->y;
 	} else {
 		ILOG("cannot points from unknown type %d", obj->type);
+		return;
 	}
-}
 
+	rotateAroundCenter(obj, pts, *ms);
+}
 
 bool isObjDestroyed(Object *obj) {
 	return obj->destroyed > 0;
@@ -159,8 +218,12 @@ void objDestroy(Object *obj) {
 }
 
 
-void printObj(Object *obj) {
-	DLOG("%s pos: (%f, %f), vel: (%f, %f, %f)\n", typeToString(obj), obj->x, obj->y, obj->speed, obj->direction.x, obj->direction.y);
+void debugObj(Object *obj) {
+	DLOG("[%s] (%f, %f)->(%f, %f)", typeToString(obj), obj->x, obj->y, obj->direction.x, obj->direction.y);
+}
+
+void infoObj(Object *obj) {
+	ILOG("[%s] (%f, %f)->(%f, %f)", typeToString(obj), obj->x, obj->y, obj->direction.x, obj->direction.y);
 }
 
 bool checkCollide(Object *o1, Object *o2) {
@@ -213,24 +276,26 @@ Object *firstCollider(Object *objs, Object *o) {
 	return NULL;
 }
 
-void initObject(Object *obj, int type, float speed, Vector2 direction, Vector2 size, Vector2 pos) {
+void initObject(Object *obj, int type, float speed, Vector2 direction, Vector2 size, Vector2 pos, float angle) {
 	obj->w = size.x;
 	obj->h = size.y;
-	obj->angle = 0;
+	obj->angle = angle;
 	obj->speed = speed;
 	obj->destroyed = 0;
 	obj->type = type;
 	obj->active = true;
-	obj->direction = direction;
+	obj->direction.x = direction.x;
+	obj->direction.y = direction.y;
 	obj->x = pos.x;
 	obj->y = pos.y;
-	ILOG("[%s] (%f, %f)", typeToString(obj), obj->x, obj->y);
+	ILOG("[%s] (%f, %f)->(%f, %f)", typeToString(obj), obj->x, obj->y, obj->direction.x, obj->direction.y);
 }
 
 
 Object* activateObject(Object *objs, Object *obj, int type) {
 
 	int speed = 0;
+	float angle = 0;
 	Vector2 size, pos;
 	Vector2	direction = randomDirection();
 
@@ -244,6 +309,9 @@ Object* activateObject(Object *objs, Object *obj, int type) {
 		speed = ASTEROID_MAX_SPEED * randfloat(1.0);
 	} else if (type == SHIP) {
 		size = SHIP_SIZE;
+		direction = fixedDirection();
+		angle = randangle();
+		direction = rotate(direction, angle);
 	} else if (type == MISSILE) {
 		size.x = MISSILE_RADIUS;
 		size.y = MISSILE_RADIUS;
@@ -252,18 +320,16 @@ Object* activateObject(Object *objs, Object *obj, int type) {
 	}
 
 	//pos inited to 0 here, will get randomly placed
-	initObject(obj, type, speed, direction, size, pos);
+	initObject(obj, type, speed, direction, size, pos, angle);
 
 	while (true) {
 		pos = randomPosition();
 		obj->x = pos.x;
 		obj->y = pos.y;
 		if (firstCollider(objs, obj) == NULL) {
-			DLOG("adding object");
-			printObj(obj);
 			break;
 		} else {
-			DLOG("failed collision test, retrying placement");
+			ILOG("failed collision test, retrying placement");
 		}
 	}
 	return obj;
@@ -292,7 +358,9 @@ Object* addObject(Object *objs, int type) {
 }
 
 Object *addMissile(Object *objs, Object *ship) {
-	Object *obj = getFreeObject(objs);
+	Object *obj = NULL;
+	obj = getFreeObject(objs);
+
 	if (obj == NULL) {
 		return NULL;
 	}
@@ -305,9 +373,17 @@ Object *addMissile(Object *objs, Object *ship) {
 
 	//adds vector of ship length to mid point origin.
 	//this takes rotation of ship already into account
+	Vector2 startDirection = ship->direction;
+
+	float angleOffset = MISSILE_ANGLE_OFFSET;
+	//Rotate missiles by a fixed number to align with ship "front",
+	//which is not at 0
+	Vector2 missileDirection = rotate(startDirection, angleOffset);
+	//Vector2 missileDirection = randomDirection();
+
 	Vector2 dir = {
-		scaling * ship->direction.x,
-		scaling * ship->direction.y,
+		scaling * missileDirection.x,
+		scaling * missileDirection.y,
 	};
 
 	Vector2 pos = {
@@ -317,9 +393,9 @@ Object *addMissile(Object *objs, Object *ship) {
 
 	ILOG("ship at: (%f, %f)", ship->x, ship->y);
 	ILOG("mid at: (%f, %f)", mid.x, mid.y);
-	ILOG("direction (%f, %f)", ship->direction.x, ship->direction.y);
+	ILOG("direction (%f, %f)", missileDirection.x, missileDirection.y);
 	ILOG("pos at (%f, %f)", pos.x, pos.y);
-	initObject(obj, MISSILE, MISSILE_SPEED, ship->direction, MISSILE_SIZE, pos);
+	initObject(obj, MISSILE, ship->speed + MISSILE_SPEED, missileDirection, MISSILE_SIZE, pos, 0);
 
 	return obj;
 }
@@ -397,20 +473,22 @@ void drawObj(Object *obj) {
 		DrawRectangleLines(obj->x, obj->y, obj->w, obj->h, col);  // NOTE: Uses QUADS internally, not lines
 	} else if (obj->type == SHIP) {
 		Vector2 verts[3];
+		DLOG("points");
 		points(obj, verts, NULL);
-		DrawPoly(verts[0], 3, obj->w, obj->angle, col);
-		/*DrawTriangleLines(
+		DLOG("pointed");
+		//DrawPoly(verts[0], 3, obj->w, obj->angle, col);
+		DLOG("drawing ship: (%f, %f), (%f, %f), (%f, %f)", verts[0].x, verts[0].y, verts[1].x, verts[1].y, verts[2].x, verts[2].y);
+		DrawTriangleLines(
 				verts[0],
 				verts[1],
 				verts[2],
 			col);
-			*/
 	} else if (obj->type == MISSILE) {
 		DrawCircle(obj->x, obj->y, obj->w, col);
 	} else {
 		ILOG("cannot draw unrecognized type %d", obj->type);
 	}
-	printObj(obj);
+	debugObj(obj);
 }
 
 
@@ -425,11 +503,9 @@ void warpY(Object *obj, float newY) {
 }
 
 void advance(Object *obj) {
-	DLOG("advancing");
 	Vector2 av = {obj->direction.x * obj->speed, obj->direction.y * obj->speed};
 	obj->x = av.x + obj->x;
 	obj->y = av.y + obj->y;
-	printObj(obj);
 }
 
 void handleOffscreen(Object *obj) {
@@ -559,10 +635,10 @@ bool isOutsideSpawnGuard(Object *obj, int type) {
 }
 
 void handleDestruction(Object *objs) {
-	int destructThreshold = 5;
 	for (int i = 0; i < MAX_OBJS; i++) {
 		if (objs[i].active &&
 				isObjDestroyed(&objs[i])) {
+			int destructThreshold = DESTRUCTION_THRESHOLDS[objs[i].type];
 			if (objs[i].destroyed++ > destructThreshold) {
 				objs[i].active = 0;
 			}
@@ -693,9 +769,7 @@ int main(int argc, char *argv[])
     // Initialization
     //--------------------------------------------------------------------------------------
 		const int fps = 30;
-		int nAsteroids = 2, maxAsteroids = 10;
-		float expAsteroidSpawnPerSec = 1;
-		float asteroidSpawnP = expAsteroidSpawnPerSec / fps;
+		float asteroidSpawnP = EXPECTED_ASTEROIDS_PER_SEC / fps;
 		Parsec *parsec;
 		char *session;
 
@@ -726,7 +800,7 @@ int main(int argc, char *argv[])
 			objs[i].active = 0;
 		}
 
-		for (int i = 0; i < nAsteroids; i++) {
+		for (int i = 0; i < N_START_ASTEROIDS; i++) {
 			addObject(objs, ASTEROID);
 		}
 
@@ -783,7 +857,7 @@ int main(int argc, char *argv[])
 				if (randprob(asteroidSpawnP)) {
 					DLOG("spawn asteroid triggered");
 
-					if (countObjects(objs, ASTEROID) < maxAsteroids) {
+					if (countObjects(objs, ASTEROID) < MAX_ASTEROIDS) {
 						addObject(objs, ASTEROID);
 					} else {
 						DLOG("not spawning b/c max asteroids");
