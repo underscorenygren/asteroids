@@ -10,10 +10,8 @@
 
 #define MAX_PLAYERS 8
 
-#define SHIP_SPAWN_GUARD 3
-#define ANGULAR_MOVEMENT 3
+#define ANGULAR_MOVEMENT 6
 #define SPEED_MOVEMENT 0.5f
-#define REMOTE_MULTIPLIER 3
 
 #define DEBUG false
 #define INFO true
@@ -29,9 +27,12 @@ const int SCREEN_W = 1600;
 const int SCREEN_H = (2 * SCREEN_W / 3);
 
 const int ASTEROID_MAX_SPEED = 10.0;
-const int N_START_ASTEROIDS = 10;
+const int N_START_ASTEROIDS = 5;
 const int MAX_ASTEROIDS = 30;
-const float EXPECTED_ASTEROIDS_PER_SEC = 2;
+const float EXPECTED_ASTEROIDS_PER_SEC = 3;
+const float ASTEROID_SPAWN_DRIVER = 0.05;
+const int MISSILE_COOLDOWN = 10; //NB: Measured in frames
+const float MAX_ASTEROID_ANGULAR_MOMENTUM = 15.0;
 
 const int MAX_OBJS = 100;
 const int MISSILE_SPEED = 20.0;
@@ -56,6 +57,8 @@ typedef struct Object {
 	int destroyed;
 	int type;
 	bool active;
+	uint64_t framecounter;
+	float rotation;
 } Object;
 
 typedef struct Player {
@@ -67,6 +70,7 @@ typedef struct Player {
 typedef struct GameState {
 	Player players[MAX_PLAYERS];
 	Object objs[MAX_OBJS];
+	uint64_t framecounter;
 } GameState;
 
 typedef enum ShipAction {
@@ -155,11 +159,16 @@ Vector2 objMid(Object *obj) {
 	return v;
 }
 
+Vector2 objPos(Object *obj) {
+	Vector2 v = {obj->x, obj->y};
+	return v;
+}
+
+
 void rotateAroundCenter(Object *obj, Vector2 *pts, int n) {
 	Vector2 mid = objMid(obj);
 	Vector2 inv = {-mid.x, -mid.y};
 	for (int i = 0; i < n; i++) {
-		DLOG("rotating (%f, %f), %f", pts[i].x, pts[i].y, obj->angle);
 		Vector2 res =
 			translate(
 				rotate(
@@ -168,7 +177,6 @@ void rotateAroundCenter(Object *obj, Vector2 *pts, int n) {
 			inv);
 		pts[i].x = res.x;
 		pts[i].y = res.y;
-		DLOG("rotated (%f, %f)", pts[i].x, pts[i].y);
 	}
 }
 
@@ -211,6 +219,13 @@ bool isObjDestroyed(Object *obj) {
 	return obj->destroyed > 0;
 }
 
+bool isNotInCooldown(GameState *state, Object *obj, uint64_t cooldown) {
+	uint64_t now = state->framecounter;
+	int diff = now - obj->framecounter;
+	//NB first check handles overflow of uint in global frame counter
+	return now < obj->framecounter || diff > cooldown;
+}
+
 void objDestroy(Object *obj) {
 	if (!isObjDestroyed(obj)) {
 		obj->destroyed = 1;
@@ -219,11 +234,11 @@ void objDestroy(Object *obj) {
 
 
 void debugObj(Object *obj) {
-	DLOG("[%s] (%f, %f)->(%f, %f)", typeToString(obj), obj->x, obj->y, obj->direction.x, obj->direction.y);
+	DLOG("[%s] (%f, %f)->(%f, %f)@(%f, %f)", typeToString(obj), obj->x, obj->y, obj->direction.x, obj->direction.y, obj->angle, obj->rotation);
 }
 
 void infoObj(Object *obj) {
-	ILOG("[%s] (%f, %f)->(%f, %f)", typeToString(obj), obj->x, obj->y, obj->direction.x, obj->direction.y);
+	ILOG("[%s] (%f, %f)->(%f, %f)@(%f, %f)", typeToString(obj), obj->x, obj->y, obj->direction.x, obj->direction.y, obj->angle, obj->rotation);
 }
 
 bool checkCollide(Object *o1, Object *o2) {
@@ -276,7 +291,7 @@ Object *firstCollider(Object *objs, Object *o) {
 	return NULL;
 }
 
-void initObject(Object *obj, int type, float speed, Vector2 direction, Vector2 size, Vector2 pos, float angle) {
+void initObject(Object *obj, int type, float speed, Vector2 direction, Vector2 size, Vector2 pos, float angle, float rotation) {
 	obj->w = size.x;
 	obj->h = size.y;
 	obj->angle = angle;
@@ -288,7 +303,9 @@ void initObject(Object *obj, int type, float speed, Vector2 direction, Vector2 s
 	obj->direction.y = direction.y;
 	obj->x = pos.x;
 	obj->y = pos.y;
-	ILOG("[%s] (%f, %f)->(%f, %f)", typeToString(obj), obj->x, obj->y, obj->direction.x, obj->direction.y);
+	obj->framecounter = 0;
+	obj->rotation = rotation;
+	ILOG("[%s] (%f, %f)->(%f, %f)$(%f, %f)", typeToString(obj), obj->x, obj->y, obj->direction.x, obj->direction.y, angle, rotation);
 }
 
 
@@ -298,15 +315,18 @@ Object* activateObject(Object *objs, Object *obj, int type) {
 	float angle = 0;
 	Vector2 size, pos;
 	Vector2	direction = randomDirection();
+	float rotation = 0;
 
 	if (obj == NULL) {
-		DLOG("cannot activate null object");
+		ILOG("cannot activate null object");
 		return NULL;
 	}
 
 	if (type == ASTEROID) {
 		size = ASTEROID_SIZE;
 		speed = ASTEROID_MAX_SPEED * randfloat(1.0);
+		//rotation = MAX_ASTEROID_ANGULAR_MOMENTUM * randfloat(1.0);
+		//rotation = randprob(0.5) ? rotation : -rotation; //spin in both directions
 	} else if (type == SHIP) {
 		size = SHIP_SIZE;
 		direction = fixedDirection();
@@ -320,7 +340,7 @@ Object* activateObject(Object *objs, Object *obj, int type) {
 	}
 
 	//pos inited to 0 here, will get randomly placed
-	initObject(obj, type, speed, direction, size, pos, angle);
+	initObject(obj, type, speed, direction, size, pos, angle, rotation);
 
 	while (true) {
 		pos = randomPosition();
@@ -391,11 +411,7 @@ Object *addMissile(Object *objs, Object *ship) {
 		mid.y + dir.y,
 	};
 
-	ILOG("ship at: (%f, %f)", ship->x, ship->y);
-	ILOG("mid at: (%f, %f)", mid.x, mid.y);
-	ILOG("direction (%f, %f)", missileDirection.x, missileDirection.y);
-	ILOG("pos at (%f, %f)", pos.x, pos.y);
-	initObject(obj, MISSILE, ship->speed + MISSILE_SPEED, missileDirection, MISSILE_SIZE, pos, 0);
+	initObject(obj, MISSILE, ship->speed + MISSILE_SPEED, missileDirection, MISSILE_SIZE, pos, 0, 0.0f);
 
 	return obj;
 }
@@ -471,13 +487,11 @@ void drawObj(Object *obj) {
 	}
 	if (obj->type == ASTEROID) {
 		DrawRectangleLines(obj->x, obj->y, obj->w, obj->h, col);  // NOTE: Uses QUADS internally, not lines
+		//DrawPoly(objPos(obj), 4, obj->w, obj->angle, col);
 	} else if (obj->type == SHIP) {
 		Vector2 verts[3];
-		DLOG("points");
 		points(obj, verts, NULL);
-		DLOG("pointed");
 		//DrawPoly(verts[0], 3, obj->w, obj->angle, col);
-		DLOG("drawing ship: (%f, %f), (%f, %f), (%f, %f)", verts[0].x, verts[0].y, verts[1].x, verts[1].y, verts[2].x, verts[2].y);
 		DrawTriangleLines(
 				verts[0],
 				verts[1],
@@ -502,10 +516,30 @@ void warpY(Object *obj, float newY) {
 	//obj->direction.y = -obj->direction.y;
 }
 
+void adjustAngle(Object *obj, int amount) {
+	obj->angle += amount;
+	if (obj->angle > 360) {
+		obj->angle -= 360;
+	}
+	if (obj->angle < 0) {
+		obj->angle += 360;
+	}
+}
+
+void adjustDirection(Object *obj, int amount) {
+	adjustAngle(obj, amount);
+	obj->direction = rotate(obj->direction, amount);
+}
+
+void adjustSpeed(Object *obj, float amount) {
+	obj->speed += amount;
+}
+
 void advance(Object *obj) {
 	Vector2 av = {obj->direction.x * obj->speed, obj->direction.y * obj->speed};
 	obj->x = av.x + obj->x;
 	obj->y = av.y + obj->y;
+	adjustAngle(obj, obj->rotation);
 }
 
 void handleOffscreen(Object *obj) {
@@ -547,45 +581,36 @@ void handleCollisions(Object *objs) {
 	}
 }
 
-void adjustAngle(Object *obj, int amount) {
-	obj->angle += amount;
-	if (obj->angle > 360) {
-		obj->angle -= 360;
-	}
-	if (obj->angle < 0) {
-		obj->angle += 360;
-	}
-	obj->direction = rotate(obj->direction, amount);
-}
-
-void adjustSpeed(Object *obj, float amount) {
-	obj->speed += amount;
-}
-
 void takeShipAction(GameState *state, Object *obj, ShipAction action, bool local) {
 
 	switch (action) {
 		case TURN_LEFT:
 			ILOG("turning left");
-			adjustAngle(obj, -ANGULAR_MOVEMENT * REMOTE_MULTIPLIER);
+			adjustDirection(obj, -ANGULAR_MOVEMENT);
 			break;
 		case TURN_RIGHT:
 			ILOG("turning right");
-			adjustAngle(obj, ANGULAR_MOVEMENT * REMOTE_MULTIPLIER);
+			adjustDirection(obj, ANGULAR_MOVEMENT);
 			break;
 		case SPEED_UP:
 			ILOG("speeding up");
-			adjustSpeed(obj, SPEED_MOVEMENT * REMOTE_MULTIPLIER);
+			adjustSpeed(obj, SPEED_MOVEMENT);
 			break;
 		case SPEED_DOWN:
 			ILOG("speeding down");
-			adjustSpeed(obj, -SPEED_MOVEMENT * REMOTE_MULTIPLIER);
+			adjustSpeed(obj, -SPEED_MOVEMENT);
 			break;
 		case SHOOT:
 			ILOG("shooting");
-			addMissile(state->objs, obj);
+			if (isNotInCooldown(state, obj, MISSILE_COOLDOWN)) {
+				addMissile(state->objs, obj);
+				obj->framecounter = state->framecounter;
+			}
+			break;
+		case NO_ACTION:
+			break;
 		default:
-			DLOG("Unkown action %d", action);
+			ILOG("Unkown action %d", action);
 			break;
 	}
 }
@@ -630,14 +655,11 @@ int countObjects(Object *objs, int type) {
 	return res;
 }
 
-bool isOutsideSpawnGuard(Object *obj, int type) {
-	return true;
-}
-
 void handleDestruction(Object *objs) {
 	for (int i = 0; i < MAX_OBJS; i++) {
 		if (objs[i].active &&
 				isObjDestroyed(&objs[i])) {
+			//NB risk for segfault here if indexing is wrong
 			int destructThreshold = DESTRUCTION_THRESHOLDS[objs[i].type];
 			if (objs[i].destroyed++ > destructThreshold) {
 				objs[i].active = 0;
@@ -683,8 +705,7 @@ void respawnShips(GameState *state) {
 		Object *obj = &state->objs[i];
 		if (obj->active &&
 				obj->type == SHIP &&
-				isObjDestroyed(obj) &&
-				isOutsideSpawnGuard(obj, SHIP)) {
+				isObjDestroyed(obj)) {
 			activateObject(state->objs, obj, SHIP);
 		}
 	}
@@ -769,7 +790,7 @@ int main(int argc, char *argv[])
     // Initialization
     //--------------------------------------------------------------------------------------
 		const int fps = 30;
-		float asteroidSpawnP = EXPECTED_ASTEROIDS_PER_SEC / fps;
+		float nAsteroidsMidpoint = (MAX_ASTEROIDS - N_START_ASTEROIDS) / 2;
 		Parsec *parsec;
 		char *session;
 
@@ -823,6 +844,11 @@ int main(int argc, char *argv[])
 			//----------------------------------------------------------------------------------
 			BeginDrawing();
 
+			float baseSpawnP = EXPECTED_ASTEROIDS_PER_SEC / fps;
+			float asteroidSpawnP = baseSpawnP * (
+						1 + ASTEROID_SPAWN_DRIVER *
+							(nAsteroidsMidpoint - countObjects(state.objs, ASTEROID)) / nAsteroidsMidpoint);
+
 			ClearBackground(BLACK);
 
 				DLOG("--BEGIN--");
@@ -848,8 +874,11 @@ int main(int argc, char *argv[])
 
 						handleOffscreen(&objs[i]);
 
-						handleKeyPress(&state, &objs[i]);
 					}
+				}
+
+				if (localPlayer != NULL) {
+					handleKeyPress(&state, localPlayer->ship);
 				}
 
 				handleCollisions(objs);
@@ -881,6 +910,9 @@ int main(int argc, char *argv[])
 			for (ParsecMessage msg; ParsecHostPollInput(parsec, 0, &guest, &msg);) {
 				handleInput(&state, &guest, &msg);
 			}
+
+			//will overflow, but we don't care, loops back around.
+			state.framecounter++;
     }
 
     // De-Initialization
