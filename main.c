@@ -19,6 +19,8 @@
 #define DLOG(f_, ...) (DEBUG ? printf((f_), ##__VA_ARGS__), printf("\n") : 0)
 #define ILOG(f_, ...) (INFO ? printf((f_), ##__VA_ARGS__), printf("\n") : 0)
 
+const int FPS = 60;
+
 const int ASTEROID = 1;
 const int SHIP = 2;
 const int MISSILE = 3;
@@ -26,7 +28,7 @@ const int MISSILE = 3;
 const int SCREEN_W = 1600;
 const int SCREEN_H = (2 * SCREEN_W / 3);
 
-const int ASTEROID_MAX_SPEED = 10.0;
+const int ASTEROID_MAX_SPEED = 8.0;
 const int N_START_ASTEROIDS = 5;
 const int MAX_ASTEROIDS = 30;
 const float EXPECTED_ASTEROIDS_PER_SEC = 3;
@@ -34,12 +36,12 @@ const float ASTEROID_SPAWN_DRIVER = 0.05;
 const int MISSILE_COOLDOWN = 10; //NB: Measured in frames
 const float MAX_ASTEROID_ANGULAR_MOMENTUM = 15.0;
 
-const int MAX_OBJS = 100;
+const int MAX_OBJS = 200;
 const int MISSILE_SPEED = 20.0;
 const float MISSILE_RADIUS = 1.0;
 const float MISSILE_ANGLE_OFFSET = 0.0;
 
-const Vector2 ASTEROID_SIZE = {45.0, 45.0};
+const Vector2 ASTEROID_SIZE = {35.0, 35.0};
 const Vector2 SHIP_SIZE = {20.0, 20.0};
 const Vector2 MISSILE_SIZE = {MISSILE_RADIUS, MISSILE_RADIUS};
 
@@ -65,6 +67,22 @@ typedef struct Player {
 	ParsecGuest guest;
 	Object *ship;
 	bool active;
+	bool p_w;
+	bool p_up;
+	bool p_s;
+	bool p_down;
+	bool p_a;
+	bool p_left;
+	bool p_d;
+	bool p_right;
+	bool p_space;
+	bool p_g_up;
+	bool p_g_down;
+	bool p_g_left;
+	bool p_g_right;
+	bool p_g_a;
+	bool p_g_b;
+	bool p_g_x;
 } Player;
 
 typedef struct GameState {
@@ -429,7 +447,7 @@ Player* addPlayer(GameState *state, ParsecGuest *guest) {
 	for (int i = 0; i < MAX_PLAYERS; i++) {
 		if (!state->players[i].active) {
 			if (guest != NULL) {
-				memcpy(&(state->players[i].guest), guest, sizeof(ParsecGuest));
+				state->players[i].guest = *guest;
 			}
 			Object *ship = addObject(state->objs, SHIP);
 			state->players[i].ship = ship;
@@ -443,12 +461,12 @@ Player* addPlayer(GameState *state, ParsecGuest *guest) {
 	return NULL;
 }
 
-Object* guestToShip(GameState *state, ParsecGuest *guest) {
+Player* guestToPlayer(GameState *state, ParsecGuest *guest) {
 	for (int i = 0; i < MAX_PLAYERS; i++) {
 		Player *player = &state->players[i];
 		if (state->players[i].active &&
 				state->players[i].guest.id == guest->id) {
-			return state->players[i].ship;
+			return &state->players[i];
 		}
 	}
 	return NULL;
@@ -467,13 +485,13 @@ Player* shipToPlayer(GameState *state, Object *obj) {
 	return NULL;
 }
 
-bool removePlayer(GameState *state, Object *obj) {
-	Player *player = shipToPlayer(state, obj);
-	if (player == NULL) {
+bool removePlayer(GameState *state, Player *p) {
+	if (p == NULL) {
 		return false;
 	}
-	player->active = false;
-	player->ship = NULL;
+	Object *obj = p->ship;
+	p->active = false;
+	p->ship = NULL;
 	if (obj != NULL) {
 		obj->active = false;
 	}
@@ -581,7 +599,12 @@ void handleCollisions(Object *objs) {
 	}
 }
 
-void takeShipAction(GameState *state, Object *obj, ShipAction action, bool local) {
+void takeShipAction(GameState *state, Object *obj, ShipAction action) {
+	if (obj == NULL) {
+		ILOG("null ship");
+		return;
+	}
+	DLOG("taking action %d", action);
 
 	switch (action) {
 		case TURN_LEFT:
@@ -608,6 +631,7 @@ void takeShipAction(GameState *state, Object *obj, ShipAction action, bool local
 			}
 			break;
 		case NO_ACTION:
+			DLOG("no action");
 			break;
 		default:
 			ILOG("Unkown action %d", action);
@@ -616,33 +640,50 @@ void takeShipAction(GameState *state, Object *obj, ShipAction action, bool local
 }
 
 
-void handleKeyPress(GameState *state, Object *obj) {
+void handlePlayer(GameState *state, Player *p) {
+	if (p == NULL || !p->active) {
+		return;
+	}
+	DLOG("handling player");
+
+	ShipAction action = NO_ACTION;
+	if (p->p_w || p->p_up || p->p_g_up || p->p_g_a) {
+		action = SPEED_UP;
+	}
+	if (p->p_s || p->p_down || p->p_g_down || p->p_g_b) {
+		action = SPEED_DOWN;
+	}
+	if (p->p_a || p->p_left || p->p_g_left) {
+		action = TURN_LEFT;
+	}
+	if (p->p_w || p->p_right || p->p_g_right) {
+		action = TURN_RIGHT;
+	}
+	if (p->p_space || p->p_g_x) {
+		action = SHOOT;
+	}
+	takeShipAction(state, p->ship, action);
+}
+
+
+void handleKeyPress(GameState *state, Player *player) {
 	ShipAction action = NO_ACTION;
 
-	if (obj->type != SHIP) {
+	if (player == NULL) {
 		return;
 	}
 
-	if (IsKeyDown(KEY_RIGHT)) {
-		action = TURN_RIGHT;
-	}
-	if (IsKeyDown(KEY_LEFT)) {
-		action = TURN_LEFT;
-	}
-	if (IsKeyDown(KEY_UP)) {
-		action = SPEED_UP;
-	}
-	if (IsKeyDown(KEY_DOWN)) {
-		action = SPEED_DOWN;
-	}
-	if (IsKeyDown(KEY_SPACE)) {
-		action = SHOOT;
-	}
+	DLOG("handling key presses");
 
-	if (action != NO_ACTION) {
-		DLOG("local action");
-		takeShipAction(state, obj, action, true);
-	}
+	player->p_w = IsKeyDown(KEY_W);
+	player->p_up = IsKeyDown(KEY_UP);
+	player->p_s = IsKeyDown(KEY_S);
+	player->p_down = IsKeyDown(KEY_DOWN);
+	player->p_a = IsKeyDown(KEY_A);
+	player->p_left = IsKeyDown(KEY_LEFT);
+	player->p_d = IsKeyDown(KEY_D);
+	player->p_right = IsKeyDown(KEY_RIGHT);
+	player->p_space = IsKeyDown(KEY_SPACE);
 }
 
 int countObjects(Object *objs, int type) {
@@ -668,7 +709,7 @@ void handleDestruction(Object *objs) {
 	}
 }
 
-void guest_state_change(GameState *state, ParsecGuest *guest) {
+void parsecStateChange(GameState *state, ParsecGuest *guest) {
 	ILOG("guest state change %d %d %d", guest->state, GUEST_CONNECTED, GUEST_DISCONNECTED);
 	if (guest->state == GUEST_CONNECTED) {
 		if (addPlayer(state, guest) != NULL) {
@@ -677,7 +718,7 @@ void guest_state_change(GameState *state, ParsecGuest *guest) {
 			ILOG("failed to add player");
 		}
 	} else if (guest->state == GUEST_DISCONNECTED) {
-		if (removePlayer(state, guestToShip(state, guest))) {
+		if (removePlayer(state, guestToPlayer(state, guest))) {
 			ILOG("removed player id: %d", guest->id);
 		} else {
 			ILOG("failed to remove player");
@@ -712,66 +753,79 @@ void respawnShips(GameState *state) {
 }
 
 void handleInput(GameState *state, ParsecGuest *guest, ParsecMessage *msg) {
-	ShipAction action = NO_ACTION;
-	Object *ship = guestToShip(state, guest);
-	ILOG("handling input for [%d] %d", guest->id, msg->type);
-	if (ship == NULL) {
-		ILOG("no ship for guest");
-		return;
-	}
+	//ILOG("handling input for [%d] %d", guest->id, msg->type);
+	Player *p = guestToPlayer(state, guest);
+	bool pressed = false;
 
 	if (msg->type == MESSAGE_KEYBOARD) {
-		ILOG("keyboard event");
+		pressed = msg->keyboard.pressed;
+		DLOG("[%d] keyboard event: %i", guest->id, pressed);
 		switch (msg->keyboard.code) {
 			case PARSEC_KEY_W:
+				p->p_w = pressed;
+				break;
 			case PARSEC_KEY_UP:
-				action = SPEED_UP;
+				p->p_up = pressed;
 				break;
 			case PARSEC_KEY_S:
+				p->p_s = pressed;
+				break;
 			case PARSEC_KEY_DOWN:
-				action = SPEED_DOWN;
+				p->p_up = pressed;
 				break;
 			case PARSEC_KEY_A:
+				p->p_a = pressed;
+				break;
 			case PARSEC_KEY_LEFT:
-				action = TURN_LEFT;
+				p->p_left = pressed;
 				break;
 			case PARSEC_KEY_D:
+				p->p_d = pressed;
+				break;
 			case PARSEC_KEY_RIGHT:
-				action = TURN_RIGHT;
+				p->p_right = pressed;
 				break;
 			case PARSEC_KEY_SPACE:
-				action = SHOOT;
+				p->p_space = pressed;
 				break;
 			default:
+				DLOG("unrecognized keyboard");
 				break;
 		}
 	} else if (msg->type == MESSAGE_GAMEPAD_BUTTON) {
-		ILOG("gamepad button event");
+		pressed = msg->gamepadButton.pressed;
+		DLOG("[%i] gamepad button event: %i", guest->id, pressed);
 		switch (msg->gamepadButton.button) {
-			case GAMEPAD_BUTTON_A:
-				action = SHOOT;
-				break;
 			case GAMEPAD_BUTTON_DPAD_UP:
-				action = SPEED_UP;
+				p->p_g_up = pressed;
 				break;
 			case GAMEPAD_BUTTON_DPAD_DOWN:
-			case GAMEPAD_BUTTON_B:
-				action = SPEED_DOWN;
+				p->p_g_down = pressed;
 				break;
 			case GAMEPAD_BUTTON_DPAD_LEFT:
-				action = TURN_LEFT;
+				p->p_g_left = pressed;
 				break;
 			case GAMEPAD_BUTTON_DPAD_RIGHT:
-				action = TURN_RIGHT;
+				p->p_g_right = pressed;
+				break;
+			case GAMEPAD_BUTTON_A:
+				p->p_g_a = pressed;
+				break;
+			case GAMEPAD_BUTTON_B:
+				p->p_g_b = pressed;
+				break;
+			case GAMEPAD_BUTTON_X:
+				p->p_g_x = pressed;
 				break;
 			default:
+				DLOG("unrecognized gamepad");
 				break;
 		}
-	} else if (msg->type == MESSAGE_GAMEPAD_AXIS) {
-		ParsecGamepadAxisMessage *pm = &msg->gamepadAxis;
+	} else {
+		DLOG("unmapped parsec message %i", msg->type);
+	//} else if (msg->type == MESSAGE_GAMEPAD_AXIS) {
+	//	ParsecGamepadAxisMessage *pm = &msg->gamepadAxis;
 	}
-
-	takeShipAction(state, ship, action, false);
 }
 
 void kickGuests(GameState *state, Parsec *parsec) {
@@ -789,7 +843,6 @@ int main(int argc, char *argv[])
 {
     // Initialization
     //--------------------------------------------------------------------------------------
-		const int fps = 30;
 		float nAsteroidsMidpoint = (MAX_ASTEROIDS - N_START_ASTEROIDS) / 2;
 		Parsec *parsec;
 		char *session;
@@ -797,7 +850,7 @@ int main(int argc, char *argv[])
 		Player *localPlayer;
 
 		SetTraceLogLevel(LOG_WARNING);
-		GameState state;
+		GameState state = { 0 };
 		Object *objs = &state.objs[0];
 
 		if (argc < 2) {
@@ -829,7 +882,7 @@ int main(int argc, char *argv[])
 
     InitWindow(SCREEN_W, SCREEN_H, "Asteroid BATTLE!");
 
-    SetTargetFPS(fps);               // Set our game to run at 60 frames-per-second
+    SetTargetFPS(FPS);               // Set our game to run at 60 frames-per-second
     //--------------------------------------------------------------------------------------
 
     // Main game loop
@@ -844,7 +897,7 @@ int main(int argc, char *argv[])
 			//----------------------------------------------------------------------------------
 			BeginDrawing();
 
-			float baseSpawnP = EXPECTED_ASTEROIDS_PER_SEC / fps;
+			float baseSpawnP = EXPECTED_ASTEROIDS_PER_SEC / FPS;
 			float asteroidSpawnP = baseSpawnP * (
 						1 + ASTEROID_SPAWN_DRIVER *
 							(nAsteroidsMidpoint - countObjects(state.objs, ASTEROID)) / nAsteroidsMidpoint);
@@ -859,7 +912,7 @@ int main(int argc, char *argv[])
 				}
 				if (IsKeyDown(KEY_U) && localPlayer != NULL) {
 					ILOG("removing local player");
-					removePlayer(&state, localPlayer->ship);
+					removePlayer(&state, localPlayer);
 					localPlayer = NULL;
 				}
 
@@ -875,10 +928,6 @@ int main(int argc, char *argv[])
 						handleOffscreen(&objs[i]);
 
 					}
-				}
-
-				if (localPlayer != NULL) {
-					handleKeyPress(&state, localPlayer->ship);
 				}
 
 				handleCollisions(objs);
@@ -903,12 +952,17 @@ int main(int argc, char *argv[])
 
 			for (ParsecHostEvent event; ParsecHostPollEvents(parsec, 0, &event);) {
 				if (event.type == HOST_EVENT_GUEST_STATE_CHANGE)
-					guest_state_change(&state, &event.guestStateChange.guest);
+					parsecStateChange(&state, &event.guestStateChange.guest);
 			}
 
 			ParsecGuest guest;
 			for (ParsecMessage msg; ParsecHostPollInput(parsec, 0, &guest, &msg);) {
 				handleInput(&state, &guest, &msg);
+			}
+			handleKeyPress(&state, localPlayer);
+
+			for (int i = 0; i < MAX_PLAYERS; i++) {
+				handlePlayer(&state, &state.players[i]);
 			}
 
 			//will overflow, but we don't care, loops back around.
