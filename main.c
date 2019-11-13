@@ -10,8 +10,8 @@
 
 #define MAX_PLAYERS 8
 
-#define ANGULAR_MOVEMENT 6
-#define SPEED_MOVEMENT 0.5f
+#define ANGULAR_MOVEMENT 5
+#define SPEED_MOVEMENT 0.4f
 
 #define DEBUG false
 #define INFO true
@@ -160,6 +160,36 @@ float randangle() {
 	return 360.0 * randfloat(1.0);
 }
 
+//https://stackoverflow.com/questions/563198/how-do-you-detect-where-two-line-segments-intersect
+bool get_line_intersection(float p0_x, float p0_y, float p1_x, float p1_y,
+    float p2_x, float p2_y, float p3_x, float p3_y, float *i_x, float *i_y)
+{
+    float s1_x, s1_y, s2_x, s2_y;
+    s1_x = p1_x - p0_x;     s1_y = p1_y - p0_y;
+    s2_x = p3_x - p2_x;     s2_y = p3_y - p2_y;
+
+    float s, t;
+    s = (-s1_y * (p0_x - p2_x) + s1_x * (p0_y - p2_y)) / (-s2_x * s1_y + s1_x * s2_y);
+    t = ( s2_x * (p0_y - p2_y) - s2_y * (p0_x - p2_x)) / (-s2_x * s1_y + s1_x * s2_y);
+
+    if (s >= 0 && s <= 1 && t >= 0 && t <= 1)
+    {
+        // Collision detected
+        if (i_x != NULL)
+            *i_x = p0_x + (t * s1_x);
+        if (i_y != NULL)
+            *i_y = p0_y + (t * s1_y);
+        return true;
+    }
+
+    return false; // No collision
+}
+
+bool checkLineCollision(Vector2 p0, Vector2 p1, Vector2 p2, Vector2 p3) {
+	return get_line_intersection(p0.x, p0.y, p1.x, p1.y,
+			p2.x, p2.y, p3.x, p3.y, NULL, NULL);
+}
+
 Vector2 rotate(Vector2 v, int angle) {
 	float newX = (v.x * cos(angle*DEG2RAD)) - (v.y * sin(angle*DEG2RAD));
 	float newY = (v.x * sin(angle*DEG2RAD)) + (v.y * cos(angle*DEG2RAD));
@@ -215,6 +245,15 @@ Vector2 objPos(Object *obj) {
 	return v;
 }
 
+Vector2 nextCoord(Object *obj, bool inverted) {
+	Vector2 av = {obj->direction.x * obj->speed, obj->direction.y * obj->speed};
+	if (inverted) {
+		av.x = -av.x;
+		av.y = -av.y;
+	}
+	Vector2 res = {av.x + obj->x, av.y + obj->y};
+	return res;
+}
 
 void rotateAroundCenter(Object *obj, Vector2 *pts, int n) {
 	Vector2 mid = objMid(obj);
@@ -294,16 +333,27 @@ void infoObj(Object *obj) {
 
 bool checkCollide(Object *o1, Object *o2) {
 	Vector2 verts[4];
-	int n;
+	Vector2 prev;
+	Vector2 point;
+	int n = 0;
 
 	if (!o1->active || !o2->active) {
 		return false;
 	}
 
+	if (o1 == o2) {
+		return false;
+	}
+
 	points(o1, verts, &n);
+	if (n == 0) {
+		return false;
+	}
+
+	prev = verts[n-1];
 
 	for (int i = 0; i < n; i++) {
-		Vector2 point = verts[i];
+		point = verts[i];
 		if (o2->type == ASTEROID) {
 			Rectangle rec = {o2->x, o2->y, o2->w, o2->h};
 			if (CheckCollisionPointRec(point, rec)) {
@@ -322,9 +372,14 @@ bool checkCollide(Object *o1, Object *o2) {
 			if (isVectorEqual(point, missile)) {
 				return true;
 			}
+			Vector2 prevPos = nextCoord(o2, true);
+			if (checkLineCollision(prev, point, missile, prevPos)) {
+				return true;
+			}
 		} else {
 			ILOG("cannot check collisions for unknown type %d", o2->type);
 		}
+		prev = point;
 	}
 	return false;
 }
@@ -623,9 +678,9 @@ void adjustSpeed(Object *obj, float amount) {
 }
 
 void advance(Object *obj) {
-	Vector2 av = {obj->direction.x * obj->speed, obj->direction.y * obj->speed};
-	obj->x = av.x + obj->x;
-	obj->y = av.y + obj->y;
+	Vector2 res = nextCoord(obj, false);
+	obj->x = res.x;
+	obj->y = res.y;
 	adjustAngle(obj, obj->rotation);
 }
 
