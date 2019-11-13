@@ -28,7 +28,7 @@ const int MISSILE = 3;
 const int SCREEN_W = 1600;
 const int SCREEN_H = (2 * SCREEN_W / 3);
 const int SCOREBOARD_Y_OFFSET = 30;
-const int SCOREBOARD_FONT_SIZE = 16;
+const int SCOREBOARD_FONT_SIZE = 24;
 const int RESET_COOLDOWN = FPS;
 
 const int ASTEROID_MAX_SPEED = 8.0;
@@ -47,6 +47,10 @@ const float MISSILE_ANGLE_OFFSET = 0.0;
 const Vector2 ASTEROID_SIZE = {35.0, 35.0};
 const Vector2 SHIP_SIZE = {20.0, 20.0};
 const Vector2 MISSILE_SIZE = {MISSILE_RADIUS, MISSILE_RADIUS};
+
+const char* WELCOME_TEXT = "Welcome to Asteroids Battle! Move: Keyboard(WASD,Arrows+Space) or DPAD+A/B/X. Reset game by holding Q or L and R Triggers";
+const char* RESET_TEXT = "**wants[%d]reset**";
+const int WELCOME_TEXT_COOLDOWN = 5 * FPS;
 
 const int N_COLORS = 8;
 const Color COLORS[N_COLORS] = {
@@ -112,6 +116,7 @@ typedef struct GameState {
 	Player players[MAX_PLAYERS];
 	Object objs[MAX_OBJS];
 	uint64_t framecounter;
+	uint32_t welcomeTextCooldown;
 } GameState;
 
 typedef enum ShipAction {
@@ -866,11 +871,16 @@ void handleDestruction(GameState *state) {
 	}
 }
 
+void stateTriggerWelcome(GameState *state) {
+	state->welcomeTextCooldown = WELCOME_TEXT_COOLDOWN;
+}
+
 void parsecStateChange(GameState *state, ParsecGuest *guest) {
 	ILOG("guest state change %d %d %d", guest->state, GUEST_CONNECTED, GUEST_DISCONNECTED);
 	if (guest->state == GUEST_CONNECTED) {
 		if (addPlayer(state, guest) != NULL) {
 			ILOG("added player id: %d", guest->id);
+			stateTriggerWelcome(state);
 		} else {
 			ILOG("failed to add player");
 		}
@@ -1010,12 +1020,13 @@ void drawScoreboard(GameState *state) {
 		return;
 	}
 	float chunk = SCREEN_W / nPlayers;
-	char text[10];
+	char text[32];
 	for (int i = 0; i < MAX_PLAYERS; i++) {
 		Player *p = &state->players[i];
 		if (p->active) {
 			float x = i * chunk + chunk/2;
-			snprintf(&text[0], 10, "%d", p->score);
+			const char *fmtString = playerWantsReset(p) ? RESET_TEXT : "%d";
+			snprintf(&text[0], 32, fmtString, p->score);
 			DrawText(text, x, SCOREBOARD_Y_OFFSET, SCOREBOARD_FONT_SIZE, p->col);
 		}
 	}
@@ -1054,6 +1065,7 @@ void checkClearGame(GameState *state) {
 		}
 
 		state->framecounter = 1;
+		stateTriggerWelcome(state);
 	}
 }
 
@@ -1113,6 +1125,11 @@ int main(int argc, char *argv[])
 			ClearBackground(BLACK);
 
 				DLOG("--BEGIN--");
+
+				if (state.welcomeTextCooldown > 0) {
+					DrawText(WELCOME_TEXT, 0, 0, SCOREBOARD_FONT_SIZE, WHITE);
+					state.welcomeTextCooldown--;
+				}
 
 				if (IsKeyDown(KEY_O) && localPlayer == NULL) {
 					ILOG("adding local player");
