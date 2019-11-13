@@ -29,6 +29,7 @@ const int SCREEN_W = 1600;
 const int SCREEN_H = (2 * SCREEN_W / 3);
 const int SCOREBOARD_Y_OFFSET = 30;
 const int SCOREBOARD_FONT_SIZE = 16;
+const int RESET_COOLDOWN = FPS;
 
 const int ASTEROID_MAX_SPEED = 8.0;
 const int N_START_ASTEROIDS = 5;
@@ -95,6 +96,7 @@ typedef struct Player {
 	bool p_d;
 	bool p_right;
 	bool p_space;
+	bool p_q;
 	bool p_g_up;
 	bool p_g_down;
 	bool p_g_left;
@@ -102,6 +104,8 @@ typedef struct Player {
 	bool p_g_a;
 	bool p_g_b;
 	bool p_g_x;
+	bool p_g_lt;
+	bool p_g_rt;
 } Player;
 
 typedef struct GameState {
@@ -812,6 +816,9 @@ void handlePlayer(GameState *state, Player *p) {
 	takeShipAction(state, p->ship, action);
 }
 
+bool playerWantsReset(Player *p) {
+	return p->p_q || (p->p_g_lt && p->p_g_rt);
+}
 
 void handleKeyPress(GameState *state, Player *player) {
 	ShipAction action = NO_ACTION;
@@ -831,6 +838,7 @@ void handleKeyPress(GameState *state, Player *player) {
 	player->p_d = IsKeyDown(KEY_D);
 	player->p_right = IsKeyDown(KEY_RIGHT);
 	player->p_space = IsKeyDown(KEY_SPACE);
+	player->p_q = IsKeyDown(KEY_Q);
 }
 
 int countObjects(Object *objs, int type) {
@@ -937,6 +945,9 @@ void handleInput(GameState *state, ParsecGuest *guest, ParsecMessage *msg) {
 			case PARSEC_KEY_SPACE:
 				p->p_space = pressed;
 				break;
+			case PARSEC_KEY_Q:
+				p->p_q = pressed;
+				break;
 			default:
 				DLOG("unrecognized keyboard");
 				break;
@@ -965,6 +976,12 @@ void handleInput(GameState *state, ParsecGuest *guest, ParsecMessage *msg) {
 				break;
 			case GAMEPAD_BUTTON_X:
 				p->p_g_x = pressed;
+				break;
+			case GAMEPAD_BUTTON_LSHOULDER:
+				p->p_g_lt = pressed;
+				break;
+			case GAMEPAD_BUTTON_RSHOULDER:
+				p->p_g_rt = pressed;
 				break;
 			default:
 				DLOG("unrecognized gamepad");
@@ -1004,6 +1021,42 @@ void drawScoreboard(GameState *state) {
 	}
 }
 
+void checkClearGame(GameState *state) {
+
+	bool allWantReset = countPlayers(state) > 0; //don't reset on 0 players
+
+	for (int i = 0; i < MAX_PLAYERS; i++) {
+		Player *p = &state->players[i];
+		if (p->active) {
+			bool thisReset = playerWantsReset(p);
+			ILOG("player %i wants reset: %i", i, thisReset);
+			allWantReset = allWantReset && thisReset;
+		}
+	}
+
+	if (state->framecounter == 0 || (allWantReset && state->framecounter > RESET_COOLDOWN)) {
+		ILOG("resetting game");
+		for (int i = 0; i < MAX_OBJS; i++) {
+			state->objs[i].active = 0;
+		}
+
+		for (int i = 0; i < N_START_ASTEROIDS; i++) {
+			addObject(state->objs, ASTEROID, WHITE);
+		}
+
+		for (int i = 0; i < MAX_PLAYERS; i++) {
+			Player *p = &state->players[i];
+			if (p->active && p->ship) {
+				p->ship->destroyed = true;
+				p->ship->active = true;
+			}
+			p->score = 0;
+		}
+
+		state->framecounter = 1;
+	}
+}
+
 int main(int argc, char *argv[])
 {
     // Initialization
@@ -1016,7 +1069,6 @@ int main(int argc, char *argv[])
 
 		SetTraceLogLevel(LOG_WARNING);
 		GameState state = { 0 };
-		Object *objs = &state.objs[0];
 
 		if (argc < 2) {
 			printf("Usage: ./ [session-id]\n");
@@ -1035,16 +1087,6 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 
-		for (int i = 0; i < MAX_OBJS; i++) {
-			objs[i].active = 0;
-		}
-
-		for (int i = 0; i < N_START_ASTEROIDS; i++) {
-			addObject(objs, ASTEROID, WHITE);
-		}
-
-		Object objPtr = *objs;
-
     InitWindow(SCREEN_W, SCREEN_H, "Asteroid BATTLE!");
 
     SetTargetFPS(FPS);               // Set our game to run at 60 frames-per-second
@@ -1061,6 +1103,7 @@ int main(int argc, char *argv[])
 			// Draw
 			//----------------------------------------------------------------------------------
 			BeginDrawing();
+			checkClearGame(&state);
 
 			float baseSpawnP = EXPECTED_ASTEROIDS_PER_SEC / FPS;
 			float asteroidSpawnP = baseSpawnP * (
@@ -1083,14 +1126,14 @@ int main(int argc, char *argv[])
 
 				for (int i = 0; i < MAX_OBJS; i++) {
 
-					if (objs[i].active) {
+					if (state.objs[i].active) {
 						DLOG("drawing");
 
-						drawObj(&objs[i]);
+						drawObj(&state.objs[i]);
 
-						advance(&objs[i]); //NB must pass by reference
+						advance(&state.objs[i]); //NB must pass by reference
 
-						handleOffscreen(&objs[i]);
+						handleOffscreen(&state.objs[i]);
 
 					}
 				}
@@ -1100,8 +1143,8 @@ int main(int argc, char *argv[])
 				if (randprob(asteroidSpawnP)) {
 					DLOG("spawn asteroid triggered");
 
-					if (countObjects(objs, ASTEROID) < MAX_ASTEROIDS) {
-						addObject(objs, ASTEROID, WHITE);
+					if (countObjects(state.objs, ASTEROID) < MAX_ASTEROIDS) {
+						addObject(state.objs, ASTEROID, WHITE);
 					} else {
 						DLOG("not spawning b/c max asteroids");
 					}
