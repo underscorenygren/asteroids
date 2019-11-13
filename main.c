@@ -27,6 +27,8 @@ const int MISSILE = 3;
 
 const int SCREEN_W = 1600;
 const int SCREEN_H = (2 * SCREEN_W / 3);
+const int SCOREBOARD_Y_OFFSET = 30;
+const int SCOREBOARD_FONT_SIZE = 16;
 
 const int ASTEROID_MAX_SPEED = 8.0;
 const int N_START_ASTEROIDS = 5;
@@ -45,6 +47,18 @@ const Vector2 ASTEROID_SIZE = {35.0, 35.0};
 const Vector2 SHIP_SIZE = {20.0, 20.0};
 const Vector2 MISSILE_SIZE = {MISSILE_RADIUS, MISSILE_RADIUS};
 
+const int N_COLORS = 8;
+const Color COLORS[N_COLORS] = {
+	GOLD,
+	ORANGE,
+	PINK,
+	LIME,
+	GREEN,
+	SKYBLUE,
+	VIOLET,
+	DARKBROWN,
+};
+
 //We use types to index into, beware the segfault
 int DESTRUCTION_THRESHOLDS[] = {
 	0, //ignored
@@ -61,11 +75,16 @@ typedef struct Object {
 	bool active;
 	uint64_t framecounter;
 	float rotation;
+	Color col;
 } Object;
+
+const Object EMPTY_OBJECT = { 0 };
 
 typedef struct Player {
 	ParsecGuest guest;
 	Object *ship;
+	Color col;
+	int score;
 	bool active;
 	bool p_w;
 	bool p_up;
@@ -121,6 +140,20 @@ float randfloat(float a) {
 bool randprob(float a) {
 	int res = rand();
 	return (float)res < RAND_MAX * a;
+}
+
+int randint(int max) {
+	int res = rand();
+	int chunk = RAND_MAX / max;
+	int i = 0;
+	//iterate until random falls out of interval
+	for (; i < max; i++) {
+		if (res < chunk * (i+1)) {
+			break;
+		}
+	}
+
+	return i;
 }
 
 float randangle() {
@@ -309,7 +342,7 @@ Object *firstCollider(Object *objs, Object *o) {
 	return NULL;
 }
 
-void initObject(Object *obj, int type, float speed, Vector2 direction, Vector2 size, Vector2 pos, float angle, float rotation) {
+void initObject(Object *obj, int type, float speed, Vector2 direction, Vector2 size, Vector2 pos, float angle, float rotation, Color col) {
 	obj->w = size.x;
 	obj->h = size.y;
 	obj->angle = angle;
@@ -323,11 +356,12 @@ void initObject(Object *obj, int type, float speed, Vector2 direction, Vector2 s
 	obj->y = pos.y;
 	obj->framecounter = 0;
 	obj->rotation = rotation;
+	obj->col = col;
 	ILOG("[%s] (%f, %f)->(%f, %f)$(%f, %f)", typeToString(obj), obj->x, obj->y, obj->direction.x, obj->direction.y, angle, rotation);
 }
 
 
-Object* activateObject(Object *objs, Object *obj, int type) {
+Object* activateObject(Object *objs, Object *obj, int type, Color col) {
 
 	int speed = 0;
 	float angle = 0;
@@ -358,7 +392,7 @@ Object* activateObject(Object *objs, Object *obj, int type) {
 	}
 
 	//pos inited to 0 here, will get randomly placed
-	initObject(obj, type, speed, direction, size, pos, angle, rotation);
+	initObject(obj, type, speed, direction, size, pos, angle, rotation, col);
 
 	while (true) {
 		pos = randomPosition();
@@ -380,28 +414,65 @@ Object *getFreeObject(Object *objs) {
 		ref = &objs[i];
 		if (!ref->active) {
 			obj = ref;
+			*obj = EMPTY_OBJECT;
 			break;
 		}
 	}
 	return obj;
 }
 
-Object* addObject(Object *objs, int type) {
+Object* addObject(Object *objs, int type, Color col) {
 	Object *obj = getFreeObject(objs);
 	if (obj == NULL) {
 		return NULL;
 	}
 
-	return activateObject(objs, obj, type);
+	return activateObject(objs, obj, type, col);
 }
 
-Object *addMissile(Object *objs, Object *ship) {
+bool isColorEqual(Color c1, Color c2) {
+	return c1.r == c2.r &&
+		c1.g == c2.g &&
+		c1.b == c2.b;
+}
+
+Player* objToPlayer(GameState *state, Object *obj) {
+	if (obj == NULL) {
+		return NULL;
+	}
+	if (obj->type == SHIP) {
+		for (int i = 0; i < MAX_PLAYERS; i++) {
+			Player *player = &state->players[i];
+			if (player->ship == obj) {
+				return player;
+			}
+		}
+	}
+	if (obj->type == MISSILE) {
+		for (int i = 0; i < MAX_PLAYERS; i++) {
+			Player *player = &state->players[i];
+			if (isColorEqual(player->col, obj->col)) {
+				return player;
+			}
+		}
+	}
+	return NULL;
+}
+
+Object *addMissile(GameState *state, Object *ship) {
 	Object *obj = NULL;
+	Object *objs = state->objs;
 	obj = getFreeObject(objs);
+	Player *p = objToPlayer(state, ship);
 
 	if (obj == NULL) {
 		return NULL;
 	}
+	if (p == NULL) {
+		ILOG("no player for ship launching missile");
+		return NULL;
+	}
+
 	//middle of ship, vector radiating out in direction of length
 	Vector2 mid = {
 		ship->x + SHIP_SIZE.x/2,
@@ -429,7 +500,7 @@ Object *addMissile(Object *objs, Object *ship) {
 		mid.y + dir.y,
 	};
 
-	initObject(obj, MISSILE, ship->speed + MISSILE_SPEED, missileDirection, MISSILE_SIZE, pos, 0, 0.0f);
+	initObject(obj, MISSILE, ship->speed + MISSILE_SPEED, missileDirection, MISSILE_SIZE, pos, 0, 0.0f, p->col);
 
 	return obj;
 }
@@ -445,13 +516,15 @@ int countPlayers(GameState *state) {
 
 Player* addPlayer(GameState *state, ParsecGuest *guest) {
 	for (int i = 0; i < MAX_PLAYERS; i++) {
-		if (!state->players[i].active) {
+		Player *p = &state->players[i];
+		if (!p->active) {
 			if (guest != NULL) {
-				state->players[i].guest = *guest;
+				p->guest = *guest;
 			}
-			Object *ship = addObject(state->objs, SHIP);
-			state->players[i].ship = ship;
-			state->players[i].active = true;
+			p->col = COLORS[randint(N_COLORS)];
+			Object *ship = addObject(state->objs, SHIP, p->col);
+			p->ship = ship;
+			p->active = true;
 			if (ship == NULL) {
 				return NULL;
 			}
@@ -472,17 +545,10 @@ Player* guestToPlayer(GameState *state, ParsecGuest *guest) {
 	return NULL;
 }
 
-Player* shipToPlayer(GameState *state, Object *obj) {
-	if (obj == NULL) {
-		return NULL;
+void adjustScore(Player *p, int amount) {
+	if (p != NULL) {
+		p->score += amount;
 	}
-	for (int i = 0; i < MAX_PLAYERS; i++) {
-		Player *player = &state->players[i];
-		if (player->ship == obj) {
-			return player;
-		}
-	}
-	return NULL;
 }
 
 bool removePlayer(GameState *state, Player *p) {
@@ -499,7 +565,7 @@ bool removePlayer(GameState *state, Player *p) {
 }
 
 void drawObj(Object *obj) {
-	Color col = WHITE;
+	Color col = obj->col;
 	if (isObjDestroyed(obj)) {
 		col = RED;
 	}
@@ -551,6 +617,9 @@ void adjustDirection(Object *obj, int amount) {
 
 void adjustSpeed(Object *obj, float amount) {
 	obj->speed += amount;
+	if (obj->speed < 0) {
+		obj->speed = 0;
+	}
 }
 
 void advance(Object *obj) {
@@ -588,13 +657,36 @@ void handleOffscreen(Object *obj) {
 	}
 }
 
-void handleCollisions(Object *objs) {
+void destroy(GameState *state, Object *obj, Object *collider) {
+	int amount = 0;
+	Player *p = objToPlayer(state, obj);
+	objDestroy(obj);
+
+	if (p == NULL) {
+		return;
+	}
+
+	if (obj->type == SHIP) {
+		adjustScore(p, -1);
+	}
+
+	if (obj->type == MISSILE && collider->type == SHIP) {
+		Player *other = objToPlayer(state, collider);
+		if (other != p) {
+			adjustScore(p, 1);
+		}
+	}
+}
+
+void handleCollisions(GameState *state) {
+	Player *p;
+	Object *objs = state->objs;
 	for (int i = 0; i < MAX_OBJS; i++) {
 		Object *oi = &objs[i];
 		Object *oj = firstCollider(objs, oi);
 		if (oj != NULL) {
-			objDestroy(oi);
-			objDestroy(oj);
+			destroy(state, oi, oj);
+			destroy(state, oj, oi);
 		}
 	}
 }
@@ -626,7 +718,7 @@ void takeShipAction(GameState *state, Object *obj, ShipAction action) {
 		case SHOOT:
 			ILOG("shooting");
 			if (isNotInCooldown(state, obj, MISSILE_COOLDOWN)) {
-				addMissile(state->objs, obj);
+				addMissile(state, obj);
 				obj->framecounter = state->framecounter;
 			}
 			break;
@@ -696,14 +788,16 @@ int countObjects(Object *objs, int type) {
 	return res;
 }
 
-void handleDestruction(Object *objs) {
+void handleDestruction(GameState *state) {
+	Object *objs = state->objs;
 	for (int i = 0; i < MAX_OBJS; i++) {
-		if (objs[i].active &&
-				isObjDestroyed(&objs[i])) {
+		Object *obj = &objs[i];
+		if (obj->active &&
+				isObjDestroyed(obj)) {
 			//NB risk for segfault here if indexing is wrong
-			int destructThreshold = DESTRUCTION_THRESHOLDS[objs[i].type];
+			int destructThreshold = DESTRUCTION_THRESHOLDS[obj->type];
 			if (objs[i].destroyed++ > destructThreshold) {
-				objs[i].active = 0;
+				obj->active = 0;
 			}
 		}
 	}
@@ -747,7 +841,7 @@ void respawnShips(GameState *state) {
 		if (obj->active &&
 				obj->type == SHIP &&
 				isObjDestroyed(obj)) {
-			activateObject(state->objs, obj, SHIP);
+			activateObject(state->objs, obj, SHIP, obj->col);
 		}
 	}
 }
@@ -838,6 +932,22 @@ void kickGuests(GameState *state, Parsec *parsec) {
 	}
 }
 
+void drawScoreboard(GameState *state) {
+	int nPlayers = countPlayers(state);
+	if (nPlayers == 0) {
+		return;
+	}
+	float chunk = SCREEN_W / nPlayers;
+	char text[10];
+	for (int i = 0; i < MAX_PLAYERS; i++) {
+		Player *p = &state->players[i];
+		if (p->active) {
+			float x = i * chunk + chunk/2;
+			snprintf(&text[0], 10, "%d", p->score);
+			DrawText(text, x, SCOREBOARD_Y_OFFSET, SCOREBOARD_FONT_SIZE, p->col);
+		}
+	}
+}
 
 int main(int argc, char *argv[])
 {
@@ -875,7 +985,7 @@ int main(int argc, char *argv[])
 		}
 
 		for (int i = 0; i < N_START_ASTEROIDS; i++) {
-			addObject(objs, ASTEROID);
+			addObject(objs, ASTEROID, WHITE);
 		}
 
 		Object objPtr = *objs;
@@ -930,20 +1040,21 @@ int main(int argc, char *argv[])
 					}
 				}
 
-				handleCollisions(objs);
+				handleCollisions(&state);
 
 				if (randprob(asteroidSpawnP)) {
 					DLOG("spawn asteroid triggered");
 
 					if (countObjects(objs, ASTEROID) < MAX_ASTEROIDS) {
-						addObject(objs, ASTEROID);
+						addObject(objs, ASTEROID, WHITE);
 					} else {
 						DLOG("not spawning b/c max asteroids");
 					}
 				}
 
-				handleDestruction(objs);
+				handleDestruction(&state);
 				respawnShips(&state);
+				drawScoreboard(&state);
 
 			EndDrawing();
 			//----------------------------------------------------------------------------------
