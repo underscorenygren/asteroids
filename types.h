@@ -6,7 +6,7 @@
 #include "raylib.h"
 #include "parsec.h"
 
-#define DEBUG false
+#define DEBUG true
 #define INFO true
 
 #define DLOG(f_, ...) (DEBUG ? printf((f_), ##__VA_ARGS__), printf("\n") : 0)
@@ -19,7 +19,7 @@ const int SHIP = 2;
 const int MISSILE = 3;
 
 //Game Settings
-const int FPS = 60;
+const int FPS = 60; //Can be set lower, useful for testing
 const int MAX_PLAYERS = 8;
 const int SCREEN_W = 1600;
 const int SCREEN_H = (2 * SCREEN_W / 3);
@@ -31,16 +31,17 @@ const char* GAME_NAME = "Asteroids BATTLE!";
 const char* WELCOME_TEXT = "Welcome to Asteroids Battle! Move: Keyboard(WASD,Arrows+Space) or DPAD+A/B/X. Reset game by holding Q or L and R Triggers";
 const char* RESET_TEXT = "**wants[%d]reset**";
 const int WELCOME_TEXT_COOLDOWN = 5 * FPS;
+const char* DISABLE_PARSEC = "noparsec";
 
 //Ship Settings
 const float SHIP_SPEED_ADJUSTMENT = 0.4;
-const int SHIP_ANGLE_ADJUSTMENT = 5;
+const float SHIP_ANGLE_ADJUSTMENT = 5.0f;
 const int SHIP_MISSILE_COOLDOWN = 10; //NB: Measured in frames
 
 //ASTEROID Settings
 const int ASTEROID_MAX_SPEED = 8.0;
-const int N_START_ASTEROIDS = 5;
-const int MAX_ASTEROIDS = 30;
+const int N_START_ASTEROIDS = 0;
+const int MAX_ASTEROIDS = 0;
 const float EXPECTED_ASTEROIDS_PER_SEC = 3;
 const float ASTEROID_SPAWN_DRIVER = 0.05;
 
@@ -141,7 +142,7 @@ typedef struct GameState {
 	uint64_t framecounter;
 	uint32_t welcomeTextCooldown;
   Parsec *parsec;
-  Player localPlayer;
+  Player *localPlayer;
 } GameState;
 
 /*

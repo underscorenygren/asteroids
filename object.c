@@ -27,6 +27,22 @@ char* object_type_string(Object *obj) {
 	return "UNKNOWN";
 }
 
+/* prints object using debug logger */
+void object_debug(Object *obj, char *msg) {
+	DLOG("[%s]:%s (%f, %f)->(%f, %f)@(%f)[%i]",
+			object_type_string(obj),
+			msg,
+			obj->x, obj->y,
+			obj->direction.x, obj->direction.y,
+			obj->angle,
+			obj->destroyed);
+}
+
+/* prints object using info logger */
+void object_info(Object *obj) {
+	ILOG("[%s] (%f, %f)->(%f, %f)@(%f)", object_type_string(obj), obj->x, obj->y, obj->direction.x, obj->direction.y, obj->angle);
+}
+
 /* initializes object by setting values in struct */
 void object_init(Object *obj,
 			uint32_t type,
@@ -50,21 +66,7 @@ void object_init(Object *obj,
 	obj->y = pos.y;
 	obj->framecounter = 0;
 	obj->col = col;
-	ILOG("[%s] (%f, %f)->(%f, %f)@(%f)",
-			object_type_string(obj),
-			obj->x, obj->y,
-			obj->direction.x, obj->direction.y,
-			angle);
-}
-
-/* prints object using debug logger */
-void object_debug(Object *obj) {
-	DLOG("[%s] (%f, %f)->(%f, %f)@(%f)", object_type_string(obj), obj->x, obj->y, obj->direction.x, obj->direction.y, obj->angle);
-}
-
-/* prints object using info logger */
-void object_info(Object *obj) {
-	ILOG("[%s] (%f, %f)->(%f, %f)@(%f)", object_type_string(obj), obj->x, obj->y, obj->direction.x, obj->direction.y, obj->angle);
+	object_debug(obj, "creating");
 }
 
 /*
@@ -77,8 +79,9 @@ Object* object_activate(Object *obj, uint32_t type, Color col) {
 
 	uint32_t speed = 0;
 	float angle = 0;
-	Vector2 size, pos;
-	Vector2	direction = vector_random_direction();
+	Vector2 size, pos, direction;
+	pos = vector_random_position();
+	direction = vector_random_direction();
 
 	if (obj == NULL) {
 		ILOG("cannot activate null object");
@@ -155,12 +158,13 @@ void object_rotate(Object *obj, Vector2 *pts, uint32_t n) {
 			inv);
 		pts[i].x = res.x;
 		pts[i].y = res.y;
+		//DLOG("point: (%f, %f)", pts[i].x, pts[i].y);
 	}
 }
 
 /*
  * Returns coordinates of point definining edges of object.
- * Pouint32_t returned in pts.
+ * Point returned in pts.
  * Will set number of points in n if set, otherwise ignored.
  * Takes rotation uint32_to account.
  */
@@ -178,22 +182,25 @@ void object_get_points(Object *obj, Vector2 *pts, uint32_t *n) {
 		pts[2].y = obj->y + obj->h;
 		pts[3].x = obj->x;
 		pts[3].y = obj->y + obj->h;
+
 	} else if (obj->type == SHIP) {
 		*ms = 3;
-		//const float pyth = sqrt(pow(obj->w/2, 2) + pow(obj->h/2, 2));
 		pts[0].x = obj->x + obj->w/2;
 		pts[0].y = obj->y;
 		pts[1].x = obj->x;
 		pts[1].y = obj->y + obj->h/2;
 		pts[2].x = obj->x + obj->w;
 		pts[2].y = obj->y + obj->h;
+
 	} else if (obj->type == MISSILE) {
 		*ms = 1;
 		pts[0].x = obj->x;
 		pts[0].y = obj->y;
+
 	} else {
-		ILOG("cannot points from unknown type %d", obj->type);
+		ILOG("cannot get points from unknown type %d", obj->type);
 		return;
+
 	}
 
 	object_rotate(obj, pts, *ms);
@@ -214,7 +221,8 @@ void object_set_y(Object *obj, float newY) {
  * increases objects current angle by amount.
  * Handles wraparound.
  */
-void object_adjust_angle(Object *obj, uint32_t amount) {
+void object_adjust_angle(Object *obj, float amount) {
+	DLOG("adjusting angle: %f", amount);
 	obj->angle += amount;
 	if (obj->angle > 360) {
 		obj->angle -= 360;
@@ -227,7 +235,7 @@ void object_adjust_angle(Object *obj, uint32_t amount) {
 /*
  * changes objects direction angle by amount.
  */
-void object_adjust_direction(Object *obj, uint32_t amount) {
+void object_adjust_direction(Object *obj, float amount) {
 	object_adjust_angle(obj, amount);
 	obj->direction = vector_rotate(obj->direction, amount);
 }
@@ -243,11 +251,14 @@ void object_adjust_speed(Object *obj, float amount) {
 	}
 }
 
-/* sets destruction state on object */
-void object_destroy(Object *obj) {
+/* sets destruction state on object.
+ * returns true iff set, false if already destroyed. */
+bool object_destroy(Object *obj) {
 	if (!object_is_destroyed(obj)) {
 		obj->destroyed = 1;
+		return true;
 	}
+	return false;
 }
 
 /* true iff o1 collides with o2 */
@@ -277,12 +288,14 @@ bool object_is_colliding(Object *o1, Object *o2) {
 		if (o2->type == ASTEROID) {
 			Rectangle rec = {o2->x, o2->y, o2->w, o2->h};
 			if (CheckCollisionPointRec(point, rec)) {
+				DLOG("asteroid collision");
 				return true;
 			}
 		} else if (o2->type == SHIP) {
 			Vector2 tv[3];
 			object_get_points(o2, tv, NULL);
 			if (CheckCollisionPointTriangle(point, tv[0], tv[1], tv[2])) {
+				DLOG("ship collision");
 				return true;
 			}
 		} else if (o2->type == MISSILE) {
@@ -290,10 +303,12 @@ bool object_is_colliding(Object *o1, Object *o2) {
 			missile.x = o2->x;
 			missile.y = o2->y;
 			if (vector_is_equal(point, missile)) {
+				DLOG("missile vector");
 				return true;
 			}
 			Vector2 prevPos = object_get_movement(o2, true);
 			if (vector_is_line_colliding(prev, point, missile, prevPos)) {
+				DLOG("missile line");
 				return true;
 			}
 		} else {
@@ -306,6 +321,7 @@ bool object_is_colliding(Object *o1, Object *o2) {
 
 /* moves an object to it's next coordinate */
 void object_advance(Object *obj) {
+	if (obj == NULL || !obj->active) { return; }
 	Vector2 verts[4];
 	uint32_t n;
 	Vector2 mvmt = object_get_movement(obj, false);
@@ -358,6 +374,6 @@ void object_draw(Object *obj) {
 	} else {
 		ILOG("cannot draw unrecognized type %d", obj->type);
 	}
-	object_debug(obj);
+	object_debug(obj, "drew");
 }
 #endif /* OBJECT_C */

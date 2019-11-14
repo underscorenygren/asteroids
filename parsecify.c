@@ -12,19 +12,23 @@
 
 /* sends frame to parsec for distribution if parsec is initialized */
 void parsecify_submit_frame(Parsec *parsec) {
-  if (!parsec) {
+  if (parsec == NULL) {
     return;
 	}
+	DLOG("submit_frame");
 
   ParsecGuest* guests;
   ParsecHostGetGuests(parsec, GUEST_CONNECTED, &guests);
   if (&guests[0] != NULL) {
+		DLOG("one guest connected");
     Image image = GetScreenData();
     ImageFlipVertical(&image);
     Texture2D tex = LoadTextureFromImage(image);
     ParsecHostGLSubmitFrame(parsec, tex.id);
-  }
-  ParsecFree(guests);
+  } else {
+		DLOG("No guests");
+	}
+	ParsecFree(guests);
 }
 
 /* adds/removes guests based on Parsec events.
@@ -151,6 +155,9 @@ void parsecify_handle_input_message(GameState *state, ParsecGuest *guest, Parsec
 
 /* Checks Parsec Inputs */
 void parsecify_check_input(Parsec *parsec, GameState *state) {
+	if (parsec == NULL) {
+		return;
+	}
 	ParsecGuest guest;
 	for (ParsecMessage msg; ParsecHostPollInput(parsec, 0, &guest, &msg);) {
 		parsecify_handle_input_message(state, &guest, &msg);
@@ -168,13 +175,13 @@ void parsecify_kick_guest(Parsec *parsec, Player *player) {
 }
 
 /* Initializes parsec. returns true on failure, false othwerwise. */
-bool parsecify_init(Parsec *parsec, char *session) {
-	if (PARSEC_OK != ParsecInit(PARSEC_VER, NULL, NULL, &parsec)) {
+bool parsecify_init(Parsec **parsec, char *session) {
+	if (PARSEC_OK != ParsecInit(PARSEC_VER, NULL, NULL, parsec)) {
 		ILOG("Couldn't init parsec");
 		return true;
 	}
 
-	if (PARSEC_OK != ParsecHostStart(parsec, HOST_GAME, NULL, session)) {
+	if (PARSEC_OK != ParsecHostStart(*parsec, HOST_GAME, NULL, session)) {
 		ILOG("Couldn't start hosting");
 		return true;
 	}

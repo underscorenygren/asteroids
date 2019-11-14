@@ -16,49 +16,41 @@
 /* Game functions stored in main to avoid circilar import hassles. */
 
 /* Handles one frame of game logic. */
-void game_loop(GameState *state) {
+void loop(GameState *state) {
+	DLOG("handling reset");
 	game_handle_reset(state);
 
+	DLOG("drawing");
 	game_draw(state);
 
+	DLOG("submitting frame");
 	parsecify_submit_frame(state->parsec);
 
+	DLOG("handling objectsl");
 	game_handle_objects(state);
 
+	DLOG("destructions");
 	game_handle_destructions(state);
 
+	DLOG("spawning asteroids");
 	game_handle_asteroid_spawn(state);
 
+	DLOG("parsec events");
 	if(parsecify_check_events(state->parsec, state)) {
 		game_trigger_welcome(state);
 	}
 
+	DLOG("parsec inputs");
 	parsecify_check_input(state->parsec, state);
 
+	DLOG("local inputs");
 	game_handle_local_keypress(state);
 
+	DLOG("handling players");
 	game_handle_players(state);
 
+	DLOG("frame end");
 	game_handle_frame_end(state);
-}
-
-/* initilaizes game, raylib and parsec. returns true iff there was an init error. */
-bool game_init(GameState *state, char *parsecSession) {
-	bool failed = parsecify_init(state->parsec, parsecSession);
-	if (failed) { return failed; }
-
-	SetTraceLogLevel(LOG_WARNING);
-	random_seed();
-	InitWindow(SCREEN_W, SCREEN_H, GAME_NAME);
-	SetTargetFPS(FPS);
-
-	return false;
-}
-
-/* deinitalizes game */
-void game_deinit(GameState *state) {
-	CloseWindow();        // Close window and OpenGL context
-	parsecify_deinit(state->parsec, state);
 }
 
 /* main loop */
@@ -75,19 +67,25 @@ int main(int argc, char *argv[])
 		}
 
 		session = argv[1];
+		game_init(&state);
 
-		if (game_init(&state, session)) {
-			return 1;
+		if (strcmp(session, DISABLE_PARSEC) == 0) {
+			ILOG("skipping parsec init");
+		} else {
+			if(parsecify_init(&state.parsec, session)) {
+				return 1;
+			}
 		}
     //--------------------------------------------------------------------------------------
 
     // Main game loop
     while (!WindowShouldClose())    // Detect window close button or ESC key
     {
-			game_loop(&state);
+			loop(&state);
     }
 
 		game_deinit(&state);
+		parsecify_deinit(state.parsec, &state);
 
     return 0;
 }

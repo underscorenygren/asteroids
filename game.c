@@ -84,10 +84,10 @@ Player* game_get_player_from_object(GameState *state, Object *obj) {
 /* Iterates over active objects and finds first collider with o.
  * NULL if no collision.
  */
-Object *game_get_first_collider(GameState *state, Object *o) {
+Object* game_get_first_collider(GameState *state, Object *o) {
 	for (uint32_t j = 0; j < MAX_OBJS; j++) {
 		Object *oj = &state->objs[j];
-		if (o != oj) {
+		if (o != oj && oj != NULL && oj->active) {
 			if (object_is_colliding(o, oj)) {
 				return oj;
 			}
@@ -148,11 +148,11 @@ Object* game_add_object(GameState *state, uint32_t type, Color col) {
  */
 Object *game_add_missile(GameState *state, Object *ship) {
 	Object *obj = NULL;
-	Object *objs = state->objs;
 	obj = game_get_free_object(state);
 	Player *p = game_get_player_from_object(state, ship);
 
 	if (obj == NULL) {
+		DLOG("no free object for missile");
 		return NULL;
 	}
 	if (p == NULL) {
@@ -161,9 +161,7 @@ Object *game_add_missile(GameState *state, Object *ship) {
 	}
 
 	//middle of ship, vector radiating out in direction of length
-	Vector2 mid = {
-		ship->x + SHIP_SIZE.x/2,
-		ship->y + SHIP_SIZE.y/2};
+	Vector2 mid = object_midpoint(ship);
 
 	float scaling = sqrt(pow(SHIP_SIZE.x, 2) + pow(SHIP_SIZE.y, 2));
 
@@ -173,7 +171,7 @@ Object *game_add_missile(GameState *state, Object *ship) {
 
 	float angleOffset = MISSILE_ANGLE_OFFSET;
 	//Rotate missiles by a fixed number to align with ship "front",
-	//which is not at 0
+	//which is not at 0.
 	Vector2 missileDirection = vector_rotate(startDirection, angleOffset);
 	//Vector2 missileDirection = randomDirection();
 
@@ -227,7 +225,7 @@ Player* game_get_player_from_guest(GameState *state, ParsecGuest *guest) {
 
 /* returns local player. */
 Player* game_get_local_player(GameState *state) {
-	return &state->localPlayer;
+	return state->localPlayer;
 }
 
 /* true iff there is a local player who is active. */
@@ -258,7 +256,9 @@ bool game_remove_player(GameState *state, Player *p) {
 void game_destroy_object(GameState *state, Object *obj, Object *collider) {
 	uint32_t amount = 0;
 	Player *p = game_get_player_from_object(state, obj);
-	object_destroy(obj);
+	if (!object_destroy(obj)) {
+		return;
+	}
 
 	if (p == NULL) {
 		return;
@@ -283,13 +283,14 @@ void game_destroy_object(GameState *state, Object *obj, Object *collider) {
  * game is small it won't matter. */
 void game_handle_objects(GameState *state) {
 	Player *p;
-	Object *objs = state->objs;
 	for (uint32_t i = 0; i < MAX_OBJS; i++) {
-		Object *oi = &objs[i];
+		Object *oi = &state->objs[i];
 		Object *oj = game_get_first_collider(state, oi);
 
 		//destroy colliders
 		if (oj != NULL) {
+			object_debug(oi, "collision");
+			object_debug(oj, "collider");
 			game_destroy_object(state, oi, oj);
 			game_destroy_object(state, oj, oi);
 		}
@@ -297,10 +298,11 @@ void game_handle_objects(GameState *state) {
 		//advance all objects
 		object_advance(oi);
 
-		//respawn ships
+		//respawn ship
 		if (oi->active &&
 				oi->type == SHIP &&
-				object_is_destroyed(oi)) {
+				oi->destroyed == 1) {
+			object_debug(oi, "respawning");
 			game_place_object(state, oi, SHIP, oi->col);
 		}
 	}
@@ -312,12 +314,14 @@ void game_handle_ship_action(GameState *state, Object *obj, ShipAction action) {
 		ILOG("null ship");
 		return;
 	}
-	DLOG("taking action %d", action);
+	object_debug(obj, "pre-action");
 
 	switch (action) {
 		case TURN_LEFT:
-			DLOG("turning left");
+			DLOG("turning left %f", -SHIP_ANGLE_ADJUSTMENT);
+			object_debug(obj, "pre-left");
 			object_adjust_direction(obj, -SHIP_ANGLE_ADJUSTMENT);
+			object_debug(obj, "post-left");
 			break;
 		case TURN_RIGHT:
 			DLOG("turning right");
@@ -332,10 +336,12 @@ void game_handle_ship_action(GameState *state, Object *obj, ShipAction action) {
 			object_adjust_speed(obj, -SHIP_SPEED_ADJUSTMENT);
 			break;
 		case SHOOT:
-			DLOG("shooting");
 			if (!game_is_object_in_cooldown(state, obj, SHIP_MISSILE_COOLDOWN)) {
+				DLOG("shooting");
 				game_add_missile(state, obj);
 				obj->framecounter = state->framecounter;
+			} else {
+				DLOG("shooting cooldown");
 			}
 			break;
 		case NO_ACTION:
@@ -345,6 +351,8 @@ void game_handle_ship_action(GameState *state, Object *obj, ShipAction action) {
 			ILOG("Unkown action %d", action);
 			break;
 	}
+
+	object_debug(obj, "post-action");
 }
 
 /* translates player key states into ship actions. */
@@ -356,21 +364,25 @@ void game_handle_player(GameState *state, Player *p) {
 
 	ShipAction action = NO_ACTION;
 	if (p->p_w || p->p_up || p->p_g_up || p->p_g_a) {
-		action = SPEED_UP;
+		DLOG("player speeding up");
+		game_handle_ship_action(state, p->ship, SPEED_UP);
 	}
 	if (p->p_s || p->p_down || p->p_g_down || p->p_g_b) {
-		action = SPEED_DOWN;
+		DLOG("player speeding down");
+		game_handle_ship_action(state, p->ship, SPEED_DOWN);
 	}
 	if (p->p_a || p->p_left || p->p_g_left) {
-		action = TURN_LEFT;
+		DLOG("player turning left");
+		game_handle_ship_action(state, p->ship, TURN_LEFT);
 	}
-	if (p->p_w || p->p_right || p->p_g_right) {
-		action = TURN_RIGHT;
+	if (p->p_d || p->p_right || p->p_g_right) {
+		DLOG("player turning right");
+		game_handle_ship_action(state, p->ship, TURN_RIGHT);
 	}
 	if (p->p_space || p->p_g_x) {
-		action = SHOOT;
+		DLOG("player shooting");
+		game_handle_ship_action(state, p->ship, SHOOT);
 	}
-	game_handle_ship_action(state, p->ship, action);
 }
 
 /* handles all players */
@@ -391,45 +403,51 @@ void game_handle_local_keypress(GameState *state) {
 		ILOG("adding local player");
 		localPlayer = game_add_player(state, NULL);
 		if (localPlayer != NULL) {
-			state->localPlayer = *localPlayer;
+			state->localPlayer = localPlayer;
 		}
 	}
 	if (IsKeyDown(KEY_U) && game_is_local_player_active(state)) {
 		ILOG("removing local player");
 		game_remove_player(state, game_get_local_player(state));
+		state->localPlayer = NULL;
 	}
 
+	localPlayer = game_get_local_player(state);
+
 	if (localPlayer == NULL) {
+		DLOG("no local player");
 		return;
 	}
 
 	DLOG("handling local key player presses");
 
-	localPlayer->p_w = IsKeyDown(KEY_W);
-	localPlayer->p_up = IsKeyDown(KEY_UP);
-	localPlayer->p_s = IsKeyDown(KEY_S);
-	localPlayer->p_down = IsKeyDown(KEY_DOWN);
-	localPlayer->p_a = IsKeyDown(KEY_A);
-	localPlayer->p_left = IsKeyDown(KEY_LEFT);
-	localPlayer->p_d = IsKeyDown(KEY_D);
-	localPlayer->p_right = IsKeyDown(KEY_RIGHT);
-	localPlayer->p_space = IsKeyDown(KEY_SPACE);
-	localPlayer->p_q = IsKeyDown(KEY_Q);
+	state->localPlayer->p_w = IsKeyDown(KEY_W);
+	state->localPlayer->p_up = IsKeyDown(KEY_UP);
+	state->localPlayer->p_s = IsKeyDown(KEY_S);
+	state->localPlayer->p_down = IsKeyDown(KEY_DOWN);
+	state->localPlayer->p_a = IsKeyDown(KEY_A);
+	state->localPlayer->p_left = IsKeyDown(KEY_LEFT);
+	state->localPlayer->p_d = IsKeyDown(KEY_D);
+	state->localPlayer->p_right = IsKeyDown(KEY_RIGHT);
+	state->localPlayer->p_space = IsKeyDown(KEY_SPACE);
+	state->localPlayer->p_q = IsKeyDown(KEY_Q);
 }
 
 /* increments destruction counters for objects, and deactivates
  * objects when they exceed threshold.
  */
 void game_handle_destructions(GameState *state) {
-	Object *objs = state->objs;
+	DLOG("handling destruction");
 	for (uint32_t i = 0; i < MAX_OBJS; i++) {
-		Object *obj = &objs[i];
+		Object *obj = &state->objs[i];
 		if (obj->active &&
 				object_is_destroyed(obj)) {
 			//NB risk for segfault here if indexing is wrong
 			uint32_t destructThreshold = DESTRUCTION_THRESHOLDS[obj->type];
-			if (objs[i].destroyed++ > destructThreshold) {
+			if (obj->destroyed++ > destructThreshold) {
 				obj->active = 0;
+				obj->destroyed = 0;
+				object_debug(obj, "destroyed");
 			}
 		}
 	}
@@ -556,6 +574,19 @@ void game_draw(GameState *state) {
 	game_draw_objects(state);
 
 	EndDrawing();
+}
+
+/* initilaizes game, raylib. returns true iff there was an init error. */
+void game_init(GameState *state) {
+	SetTraceLogLevel(LOG_WARNING);
+	random_seed();
+	InitWindow(SCREEN_W, SCREEN_H, GAME_NAME);
+	SetTargetFPS(FPS);
+}
+
+/* deinitalizes game */
+void game_deinit(GameState *state) {
+	CloseWindow();        // Close window and OpenGL context
 }
 
 #endif /* GAME_C */
