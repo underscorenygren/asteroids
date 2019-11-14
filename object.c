@@ -161,6 +161,16 @@ ObjectType object_type(Object *obj) {
 	return obj->type;
 }
 
+/* gets direction */
+Vector2 object_direction(Object *obj) {
+	return obj->direction;
+}
+
+/* gets object speed */
+float object_speed(Object *obj) {
+	return obj->speed;
+}
+
 /* returns the next position of the object based on it's
  * movement settings. inverted=true gets the previous
  * position. */

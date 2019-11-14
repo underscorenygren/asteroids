@@ -35,7 +35,7 @@ void game_trigger_welcome(GameState *state) {
 uint32_t game_get_n_players(GameState *state) {
 	uint32_t res = 0;
 	for (uint32_t i = 0; i < MAX_PLAYERS; i++) {
-		if (state->players[i].active) { res++; }
+		if (player_is_active(&state->players[i])) { res++; }
 	}
 	return res;
 }
@@ -44,7 +44,8 @@ uint32_t game_get_n_players(GameState *state) {
 uint32_t game_get_n_objects(GameState *state, uint32_t type) {
 	uint32_t res = 0;
 	for (uint32_t i = 0; i < MAX_OBJS; i++) {
-		if (state->objs[i].active && state->objs[i].type == type) {
+		Object *obj = &state->objs[i];
+		if (object_is_active(obj) && object_is_type(obj, type)) {
 			res += 1;
 		}
 	}
@@ -61,7 +62,7 @@ Player* game_get_player_from_object(GameState *state, Object *obj) {
 	if (object_is_type(obj, SHIP)) {
 		for (uint32_t i = 0; i < MAX_PLAYERS; i++) {
 			Player *player = &state->players[i];
-			if (player->ship == obj) {
+			if (player_ship(player) == obj) {
 				return player;
 			}
 		}
@@ -96,7 +97,7 @@ bool game_is_newly_spawned_missile(GameState *state, Object *obj) {
 Object* game_get_first_collider(GameState *state, Object *o) {
 	for (uint32_t j = 0; j < MAX_OBJS; j++) {
 		Object *oj = &state->objs[j];
-		if (o != oj && oj != NULL && oj->active) {
+		if (o != oj && oj != NULL && object_is_active(oj)) {
 			if (object_is_colliding(o, oj)) {
 				if (game_is_newly_spawned_missile(state, o) ||
 						game_is_newly_spawned_missile(state, oj)) {
@@ -119,7 +120,7 @@ Object* game_get_free_object(GameState *state) {
 
 	for (uint32_t i = 0; i < MAX_OBJS; i++) {
 		ref = &state->objs[i];
-		if (!ref->active) {
+		if (!object_is_active(ref)) {
 			obj = ref;
 			object_clear(obj);
 			break;
@@ -181,7 +182,7 @@ Object *game_add_missile(GameState *state, Object *ship) {
 
 	//adds vector of ship length to mid point origin.
 	//this takes rotation of ship already into account
-	Vector2 startDirection = ship->direction;
+	Vector2 startDirection = object_direction(ship);
 
 	float angleOffset = MISSILE_ANGLE_OFFSET;
 	//Rotate missiles by a fixed number to align with ship "front",
@@ -199,7 +200,7 @@ Object *game_add_missile(GameState *state, Object *ship) {
 		mid.y + dir.y,
 	};
 
-	object_init(obj, MISSILE, ship->speed + MISSILE_SPEED, missileDirection, MISSILE_SIZE, pos, 0, p->col);
+	object_init(obj, MISSILE, object_speed(ship) + MISSILE_SPEED, missileDirection, MISSILE_SIZE, pos, 0, player_color(p));
 	obj->framecounter = state->framecounter;
 
 	return obj;
@@ -217,12 +218,12 @@ bool game_new_player_color(GameState *state, Player *p) {
 		uint32_t i = 0;
 		for (; i < MAX_PLAYERS; i++) {
 			Player *thisP = &state->players[i];
-			if (p != thisP && player_is_active(thisP) && is_color_equal(thisP->col, col)) {
+			if (p != thisP && player_is_active(thisP) && is_color_equal(player_color(thisP), col)) {
 				break;
 			}
 		}
 		if (i == MAX_PLAYERS) { //successfully iterated through all players, color found
-			p->col = col;
+			player_set_color(p, col);
 			return true;
 		}
 	}
@@ -233,22 +234,21 @@ bool game_new_player_color(GameState *state, Player *p) {
 Player* game_add_player(GameState *state, ParsecGuest *guest) {
 	for (uint32_t i = 0; i < MAX_PLAYERS; i++) {
 		Player *p = &state->players[i];
-		if (!p->active) {
+		if (!player_is_active(p)) {
 			player_clear(p);
 			if (guest != NULL) {
-				p->guest = *guest;
+				player_set_guest(p, guest);
 			}
 			if (!game_new_player_color(state, p)) {
 				DLOG("Couldn't assign player color");
 				return NULL;
 			}
-			Object *ship = game_add_object(state, SHIP, p->col);
-			p->ship = ship;
-			p->active = true;
+			Object *ship = game_add_object(state, SHIP, player_color(p));
 			if (ship == NULL) {
 				DLOG("couldn't allocate ship for player");
 				return NULL;
 			}
+			player_activate(p, ship);
 
 			return &(state->players[i]); }
 	}
@@ -275,7 +275,7 @@ Player* game_get_local_player(GameState *state) {
 /* true iff there is a local player who is active. */
 bool game_is_local_player_active(GameState *state) {
 	Player *p = game_get_local_player(state);
-	return p != NULL && p->active;
+	return p != NULL && player_is_active(p);
 }
 
 /* removes a player from game. */
@@ -283,7 +283,7 @@ bool game_remove_player(GameState *state, Player *p) {
 	if (p == NULL) {
 		return false;
 	}
-	object_deactivate(p->ship);
+	object_deactivate(player_ship(p));
 	player_deactivate(p);
 	return true;
 }
@@ -343,7 +343,7 @@ void game_handle_objects(GameState *state) {
 				object_is_type(oi, SHIP) &&
 				object_is_destroyed(oi)) {
 			object_debug(oi, "respawning");
-			game_place_object(state, oi, SHIP, oi->col);
+			game_place_object(state, oi, SHIP, object_color(oi));
 		}
 	}
 }
@@ -397,7 +397,7 @@ void game_handle_ship_action(GameState *state, Object *obj, ShipAction action) {
 
 /* translates player key states into ship actions. */
 void game_handle_player(GameState *state, Player *p) {
-	if (p == NULL || !p->active) {
+	if (p == NULL || !player_is_active(p)) {
 		return;
 	}
 	DLOG("handling player");
@@ -409,19 +409,19 @@ void game_handle_player(GameState *state, Player *p) {
 	}
 	if (p->p_s || p->p_down || p->p_g_down || p->p_g_b) {
 		DLOG("player speeding down");
-		game_handle_ship_action(state, p->ship, SPEED_DOWN);
+		game_handle_ship_action(state, player_ship(p), SPEED_DOWN);
 	}
 	if (p->p_a || p->p_left || p->p_g_left) {
 		DLOG("player turning left");
-		game_handle_ship_action(state, p->ship, TURN_LEFT);
+		game_handle_ship_action(state, player_ship(p), TURN_LEFT);
 	}
 	if (p->p_d || p->p_right || p->p_g_right) {
 		DLOG("player turning right");
-		game_handle_ship_action(state, p->ship, TURN_RIGHT);
+		game_handle_ship_action(state, player_ship(p), TURN_RIGHT);
 	}
 	if (p->p_space || p->p_g_x) {
 		DLOG("player shooting");
-		game_handle_ship_action(state, p->ship, SHOOT);
+		game_handle_ship_action(state, player_ship(p), SHOOT);
 	}
 }
 
@@ -506,7 +506,7 @@ void game_handle_reset(GameState *state) {
 
 	for (uint32_t i = 0; i < MAX_PLAYERS; i++) {
 		Player *p = &state->players[i];
-		if (p->active) {
+		if (player_is_active(p)) {
 			bool thisReset = player_is_reset_requested(p);
 			DLOG("player %i wants reset: %i", i, thisReset);
 			allWantReset = allWantReset && thisReset;
@@ -516,7 +516,7 @@ void game_handle_reset(GameState *state) {
 	if (state->framecounter == 0 || (allWantReset && state->framecounter > RESET_COOLDOWN)) {
 		ILOG("resetting game");
 		for (uint32_t i = 0; i < MAX_OBJS; i++) {
-			state->objs[i].active = 0;
+			object_deactivate(&state->objs[i]);
 		}
 
 		for (uint32_t i = 0; i < N_START_ASTEROIDS; i++) {
@@ -525,11 +525,7 @@ void game_handle_reset(GameState *state) {
 
 		for (uint32_t i = 0; i < MAX_PLAYERS; i++) {
 			Player *p = &state->players[i];
-			if (p->active && p->ship) {
-				p->ship->destroyed = true;
-				p->ship->active = true;
-			}
-			p->score = 0;
+			player_reset(p);
 		}
 
 		state->framecounter = 1;
@@ -582,11 +578,11 @@ void game_draw_scoreboard(GameState *state) {
 	char text[32];
 	for (uint32_t i = 0; i < MAX_PLAYERS; i++) {
 		Player *p = &state->players[i];
-		if (p->active) {
+		if (player_is_active(p)) {
 			float x = i * chunk + chunk/2;
 			const char *fmtString = player_is_reset_requested(p) ? RESET_TEXT : "%d";
-			snprintf(&text[0], 32, fmtString, p->score);
-			DrawText(text, x, SCOREBOARD_Y_OFFSET, GAME_FONT_SIZE, p->col);
+			snprintf(&text[0], 32, fmtString, player_score(p));
+			DrawText(text, x, SCOREBOARD_Y_OFFSET, GAME_FONT_SIZE, player_color(p));
 		}
 	}
 }
