@@ -894,18 +894,14 @@ void parsecStateChange(GameState *state, ParsecGuest *guest) {
 }
 
 
-void submitHostFrameBuffer(Parsec *parsec) {
-  if (!parsec)
-    return;
-  ParsecGuest* guests;
-  ParsecHostGetGuests(parsec, GUEST_CONNECTED, &guests);
-  if (&guests[0] != NULL) {
-    Image image = GetScreenData();
-    ImageFlipVertical(&image);
-    Texture2D tex = LoadTextureFromImage(image);
-    ParsecHostGLSubmitFrame(parsec, tex.id);
-  }
-  ParsecFree(guests);
+void submitHostFrameBuffer(Parsec* parsec, unsigned int texId) {
+	if (parsec != NULL) {
+		ParsecHostStatus status = {0};
+		ParsecHostGetStatus(parsec, &status);
+		if (status.numGuests > 0) {
+			ParsecHostGLSubmitFrame(parsec, texId);
+		}
+  	}
 }
 
 void respawnShips(GameState *state) {
@@ -1104,6 +1100,14 @@ int main(int argc, char *argv[])
     SetTargetFPS(FPS);               // Set our game to run at 60 frames-per-second
     //--------------------------------------------------------------------------------------
 
+    // Create a texture to render into
+    RenderTexture2D canvas = LoadRenderTexture(SCREEN_W, SCREEN_H);
+    Rectangle src  = {0, 0, canvas.texture.width, -canvas.texture.height};
+    Rectangle dst  = {0, 0, SCREEN_W, SCREEN_H};
+    Vector2 origin = {0, 0};
+    float rotation = 0;
+	
+	
     // Main game loop
     while (!WindowShouldClose())    // Detect window close button or ESC key
     {
@@ -1114,7 +1118,8 @@ int main(int argc, char *argv[])
 
 			// Draw
 			//----------------------------------------------------------------------------------
-			BeginDrawing();
+			// Start drawing on texture
+			BeginTextureMode(canvas);	    
 			checkClearGame(&state);
 
 			float baseSpawnP = EXPECTED_ASTEROIDS_PER_SEC / FPS;
@@ -1171,10 +1176,14 @@ int main(int argc, char *argv[])
 				respawnShips(&state);
 				drawScoreboard(&state);
 
+			EndTextureMode();
+			// Draw texture to screen
+			BeginDrawing();
+			DrawTexturePro(canvas.texture, src, dst, origin, rotation, WHITE);
 			EndDrawing();
 			//----------------------------------------------------------------------------------
 			//
-			submitHostFrameBuffer(parsec);
+			submitHostFrameBuffer(parsec, canvas.texture.id);
 
 			for (ParsecHostEvent event; ParsecHostPollEvents(parsec, 0, &event);) {
 				if (event.type == HOST_EVENT_GUEST_STATE_CHANGE)
@@ -1197,6 +1206,7 @@ int main(int argc, char *argv[])
 
     // De-Initialization
     //--------------------------------------------------------------------------------------
+    UnloadRenderTexture(canvas);
     CloseWindow();        // Close window and OpenGL context
     //--------------------------------------------------------------------------------------
 		kickGuests(&state, parsec);
