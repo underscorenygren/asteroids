@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdlib.h>
+#include <assert.h>
 
 #include "types.h"
 
@@ -30,6 +31,27 @@ void player_clear(Player *p) {
 /* true iff player is not null and has active bit set */
 bool player_is_active(Player *p) {
 	return p != NULL && p->active;
+}
+
+/* true iff player matches parsec guest */
+bool player_is_guest(Player *p, ParsecGuest *g) {
+	assert(p);
+	assert(g);
+	return p->guest.id == g->id;
+}
+
+/* returns player color */
+Color player_color(Player *p) {
+	return p->col;
+}
+
+/* SETTERS / DEINIT */
+
+/* deactivates player. Player ship must
+ * be deactivated separately, but this sets it to NULL. */
+void player_deactivate(Player *p) {
+	p->ship = NULL;
+	p->active = false;
 }
 
 #endif /* PLAYER_C */

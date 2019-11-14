@@ -12,6 +12,7 @@
 #include "random.c"
 #include "vector.c"
 
+/** DEBUGGING **/
 /*
  * returns string repr of type.
  * used for debugging
@@ -43,6 +44,8 @@ void object_debug(Object *obj, char *msg) {
 void object_info(Object *obj) {
 	ILOG("[%s] (%f, %f)->(%f, %f)@(%f)", object_type_string(obj), obj->x, obj->y, obj->direction.x, obj->direction.y, obj->angle);
 }
+
+/** Initialization **/
 
 /* sets an object to 0 */
 void object_clear(Object *obj) {
@@ -117,10 +120,24 @@ Object* object_activate(Object *obj, uint32_t type, Color col) {
 	return obj;
 }
 
+/** CHECKS **/
+
 /* true iff object is destroyed */
 bool object_is_destroyed(Object *obj) {
 	return obj->destroyed > 0;
 }
+
+/* true iff objects is active */
+bool object_is_active(Object *obj) {
+	return obj->active;
+}
+
+/* true iff object is type t */
+bool object_is_type(Object *obj, ObjectType t) {
+	return obj->type == t;
+}
+
+/** GETTERS **/
 
 /* gets (x, y) of midpoint of object */
 Vector2 object_midpoint(Object *obj) {
@@ -134,10 +151,20 @@ Vector2 object_position(Object *obj) {
 	return v;
 }
 
+/* gets object color */
+Color object_color(Object *obj) {
+	return obj->col;
+}
+
+/* gets object type */
+ObjectType object_type(Object *obj) {
+	return obj->type;
+}
+
 /* returns the next position of the object based on it's
  * movement settings. inverted=true gets the previous
  * position. */
-Vector2 object_get_movement(Object *obj, bool inverted) {
+Vector2 object_movement(Object *obj, bool inverted) {
 	Vector2 av = {obj->direction.x * obj->speed, obj->direction.y * obj->speed};
 	if (inverted) {
 		av.x = -av.x;
@@ -155,7 +182,7 @@ Vector2 object_get_movement(Object *obj, bool inverted) {
  * NB: does not check that n is right for object type,
  * beware segfaults.
  */
-void object_rotate(Object *obj, Vector2 *pts, uint32_t n) {
+void object_rotate_points(Object *obj, Vector2 *pts, uint32_t n) {
 	Vector2 mid = object_midpoint(obj);
 	Vector2 inv = {-mid.x, -mid.y};
 	for (uint32_t i = 0; i < n; i++) {
@@ -167,7 +194,6 @@ void object_rotate(Object *obj, Vector2 *pts, uint32_t n) {
 			inv);
 		pts[i].x = res.x;
 		pts[i].y = res.y;
-		//DLOG("point: (%f, %f)", pts[i].x, pts[i].y);
 	}
 }
 
@@ -201,6 +227,9 @@ void object_get_points(Object *obj, Vector2 *pts, uint32_t *n) {
 		pts[2].x = obj->x + obj->w;
 		pts[2].y = obj->y + obj->h;
 
+		//As of now, only ships rotate.
+		object_rotate_points(obj, pts, *ms);
+
 	} else if (obj->type == MISSILE) {
 		*ms = 1;
 		pts[0].x = obj->x;
@@ -209,11 +238,10 @@ void object_get_points(Object *obj, Vector2 *pts, uint32_t *n) {
 	} else {
 		ILOG("cannot get points from unknown type %d", obj->type);
 		return;
-
 	}
-
-	object_rotate(obj, pts, *ms);
 }
+
+/** SETTERS **/
 
 /* sets object X coord */
 void object_set_x(Object *obj, float newX) {
@@ -260,6 +288,8 @@ void object_adjust_speed(Object *obj, float amount) {
 	}
 }
 
+/** UNINIT **/
+
 /* sets destruction state on object.
  * returns true iff set, false if already destroyed. */
 bool object_destroy(Object *obj) {
@@ -269,6 +299,22 @@ bool object_destroy(Object *obj) {
 	}
 	return false;
 }
+
+/** increments object destroy counter and returns postfix */
+uint32_t object_increment_destroy(Object *obj) {
+	return obj->destroyed++;
+}
+
+/* sets deactivation state on object, allows object to be
+ * re-assigned. Also "undestroys it" */
+void object_deactivate(Object *obj) {
+	if (obj == NULL) { return; }
+	obj->active = 0;
+	obj->destroyed = 0;
+	object_debug(obj, "deactivated");
+}
+
+/** COLLISION DETECTION **/
 
 /* true iff o1 collides with o2 */
 bool object_is_colliding(Object *o1, Object *o2) {
@@ -315,7 +361,7 @@ bool object_is_colliding(Object *o1, Object *o2) {
 				DLOG("missile vector");
 				return true;
 			}
-			Vector2 prevPos = object_get_movement(o2, true);
+			Vector2 prevPos = object_movement(o2, true);
 			if (vector_is_line_colliding(prev, point, missile, prevPos)) {
 				DLOG("missile line");
 				return true;
@@ -333,7 +379,7 @@ void object_advance(Object *obj) {
 	if (obj == NULL || !obj->active) { return; }
 	Vector2 verts[4];
 	uint32_t n;
-	Vector2 mvmt = object_get_movement(obj, false);
+	Vector2 mvmt = object_movement(obj, false);
 
 	obj->x = mvmt.x;
 	obj->y = mvmt.y;
@@ -359,6 +405,8 @@ void object_advance(Object *obj) {
 		}
 	}
 }
+
+/** DRAWING **/
 
 /* draws object based on type */
 void object_draw(Object *obj) {

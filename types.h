@@ -18,15 +18,15 @@
 //it didn't seem like it would matter much either way.
 
 //Game Settings
-const int FPS = 60; //Can be set lower, useful for testing
-const int MAX_PLAYERS = 8; //this is quite arbitrary, just has implications on memory.
-const int SCREEN_W = 1600;
-const int SCREEN_H = (2 * SCREEN_W / 3); //arbitrary ratio
-const int SCOREBOARD_Y_OFFSET = 30; //how far down to render scores
-const int GAME_FONT_SIZE = 24;  //size of scoreboard is also font for
-const int RESET_COOLDOWN = FPS;
-const int MAX_OBJS = 200;
-const int WELCOME_TEXT_COOLDOWN = 5 * FPS;
+const uint32_t FPS = 60; //Can be set lower, useful for testing
+const uint32_t MAX_PLAYERS = 8; //this is quite arbitrary, just has implications on memory.
+const uint32_t SCREEN_W = 1600;
+const uint32_t SCREEN_H = (2 * SCREEN_W / 3); //arbitrary ratio
+const uint32_t SCOREBOARD_Y_OFFSET = 30; //how far down to render scores
+const uint32_t GAME_FONT_SIZE = 24;  //size of scoreboard is also font for
+const uint32_t RESET_COOLDOWN = FPS;
+const uint32_t MAX_OBJS = 200;
+const uint32_t WELCOME_TEXT_COOLDOWN = 5 * FPS;
 const char* GAME_NAME = "Asteroids BATTLE!";
 const char* WELCOME_TEXT = "Welcome to Asteroids Battle! Move: WASD/Arrows/Space | DPAD/A/B/X. Reset Game: Q | L+R Trigger. (Un)Spawn Local Player: O+U";
 const char* RESET_TEXT = "**wants[%d]reset**";
@@ -35,12 +35,12 @@ const char* DISABLE_PARSEC = "noparsec";
 //Ship Settings
 const float SHIP_SPEED_ADJUSTMENT = 0.4;
 const float SHIP_ANGLE_ADJUSTMENT = 5.0f;
-const int SHIP_MISSILE_COOLDOWN = 10; //NB: Measured in frames
+const uint32_t SHIP_MISSILE_COOLDOWN = 10; //NB: Measured in frames
 
 //ASTEROID Settings
-const int ASTEROID_MAX_SPEED = 8.0;
-const int N_START_ASTEROIDS = 5;
-const int MAX_ASTEROIDS = 30;
+const uint32_t ASTEROID_MAX_SPEED = 8.0;
+const uint32_t N_START_ASTEROIDS = 5;
+const uint32_t MAX_ASTEROIDS = 30;
 const float EXPECTED_ASTEROIDS_PER_SEC = 3;
 const float ASTEROID_SPAWN_DRIVER = 0.05;
 
@@ -51,10 +51,13 @@ const float MISSILE_ANGLE_OFFSET = 0.0;
 
 //Types & Sizes
 //These are really enums, but I got a bit lazy so they are just stored ints
-const int ASTEROID = 1; //started at 1 so 0 set object has no type.
-const int SHIP = 2; //incremented by one to make sense in destruction array.
-const int MISSILE = 3;
-const int N_TYPES = 3; //used for destruction threshold.
+typedef enum ObjectType {
+  NONE = 0,
+  ASTEROID = 1, //started at 1 so 0 set object has no type.
+  SHIP = 2,
+  MISSILE = 3,
+} ObjectType;
+const uint32_t N_TYPES = 3; //used for destruction threshold.
 
 const Vector2 ASTEROID_SIZE = {35.0, 35.0};
 const Vector2 SHIP_SIZE = {20.0, 20.0};

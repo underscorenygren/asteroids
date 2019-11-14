@@ -58,7 +58,7 @@ Player* game_get_player_from_object(GameState *state, Object *obj) {
 	if (obj == NULL) {
 		return NULL;
 	}
-	if (obj->type == SHIP) {
+	if (object_is_type(obj, SHIP)) {
 		for (uint32_t i = 0; i < MAX_PLAYERS; i++) {
 			Player *player = &state->players[i];
 			if (player->ship == obj) {
@@ -68,10 +68,10 @@ Player* game_get_player_from_object(GameState *state, Object *obj) {
 	}
 	//Missiles belong to users if they are same color.
 	//Hacky, so should have a better system.
-	if (obj->type == MISSILE) {
+	if (object_is_type(obj, MISSILE)) {
 		for (uint32_t i = 0; i < MAX_PLAYERS; i++) {
 			Player *player = &state->players[i];
-			if (is_color_equal(player->col, obj->col)) {
+			if (is_color_equal(player_color(player), object_color(obj))) {
 				return player;
 			}
 		}
@@ -87,7 +87,7 @@ Player* game_get_player_from_object(GameState *state, Object *obj) {
 bool game_is_newly_spawned_missile(GameState *state, Object *obj) {
 	if (state == NULL || obj == NULL) { return false; }
 
-	return obj->type == MISSILE && game_is_object_in_cooldown(state, obj, 1);
+	return object_is_type(obj, MISSILE) && game_is_object_in_cooldown(state, obj, 1);
 }
 
 /* Iterates over active objects and finds first collider with o.
@@ -259,8 +259,8 @@ Player* game_add_player(GameState *state, ParsecGuest *guest) {
 Player* game_get_player_from_guest(GameState *state, ParsecGuest *guest) {
 	for (uint32_t i = 0; i < MAX_PLAYERS; i++) {
 		Player *player = &state->players[i];
-		if (state->players[i].active &&
-				state->players[i].guest.id == guest->id) {
+		if (player_is_active(&state->players[i]) &&
+				player_is_guest(&state->players[i], guest)) {
 			return &state->players[i];
 		}
 	}
@@ -283,12 +283,8 @@ bool game_remove_player(GameState *state, Player *p) {
 	if (p == NULL) {
 		return false;
 	}
-	Object *obj = p->ship;
-	p->active = false;
-	p->ship = NULL;
-	if (obj != NULL) {
-		obj->active = false;
-	}
+	object_deactivate(p->ship);
+	player_deactivate(p);
 	return true;
 }
 
@@ -308,11 +304,11 @@ void game_destroy_object(GameState *state, Object *obj, Object *collider) {
 		return;
 	}
 
-	if (obj->type == SHIP) {
+	if (object_is_type(obj, SHIP)) {
 		player_adjust_score(p, -1);
 	}
 
-	if (obj->type == MISSILE && collider->type == SHIP) {
+	if (object_is_type(obj, MISSILE) && object_is_type(collider, SHIP)) {
 		Player *other = game_get_player_from_object(state, collider);
 		if (other != p) {
 			player_adjust_score(p, 1);
@@ -343,8 +339,8 @@ void game_handle_objects(GameState *state) {
 		object_advance(oi);
 
 		//respawn ship
-		if (oi->active &&
-				oi->type == SHIP &&
+		if (object_is_active(oi) &&
+				object_is_type(oi, SHIP) &&
 				object_is_destroyed(oi)) {
 			object_debug(oi, "respawning");
 			game_place_object(state, oi, SHIP, oi->col);
@@ -484,14 +480,12 @@ void game_handle_destructions(GameState *state) {
 	DLOG("handling destruction");
 	for (uint32_t i = 0; i < MAX_OBJS; i++) {
 		Object *obj = &state->objs[i];
-		if (obj->active &&
+		if (object_is_active(obj) &&
 				object_is_destroyed(obj)) {
 			//NB risk for segfault here if indexing is wrong
-			uint32_t destructThreshold = DESTRUCTION_THRESHOLDS[obj->type];
-			if (obj->destroyed++ > destructThreshold) {
-				obj->active = 0;
-				obj->destroyed = 0;
-				object_debug(obj, "destroyed");
+			uint32_t destructThreshold = DESTRUCTION_THRESHOLDS[object_type(obj)];
+			if (object_increment_destroy(obj) > destructThreshold) {
+				object_deactivate(obj);
 			}
 		}
 	}
@@ -602,7 +596,7 @@ void game_draw_objects(GameState *state) {
 
 	for (uint32_t i = 0; i < MAX_OBJS; i++) {
 		Object *obj = &state->objs[i];
-		if (obj->active) {
+		if (object_is_active(obj)) {
 			object_draw(obj);
 		}
 	}
