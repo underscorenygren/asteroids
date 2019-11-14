@@ -345,7 +345,7 @@ void game_handle_objects(GameState *state) {
 		//respawn ship
 		if (oi->active &&
 				oi->type == SHIP &&
-				oi->destroyed == 1) {
+				object_is_destroyed(oi)) {
 			object_debug(oi, "respawning");
 			game_place_object(state, oi, SHIP, oi->col);
 		}
