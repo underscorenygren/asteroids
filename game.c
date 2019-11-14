@@ -85,7 +85,7 @@ Player* game_get_player_from_object(GameState *state, Object *obj) {
 	if (object_is_type(obj, MISSILE)) {
 		for (uint32_t i = 0; i < MAX_PLAYERS; i++) {
 			Player *player = &state->players[i];
-			if (is_color_equal(player_color(player), object_color(obj))) {
+			if (color_is_equal(player_color(player), object_color(obj))) {
 				return player;
 			}
 		}
@@ -256,7 +256,7 @@ bool game_new_player_color(GameState *state, Player *p) {
 		uint32_t i = 0;
 		for (; i < MAX_PLAYERS; i++) {
 			Player *thisP = &state->players[i];
-			if (p != thisP && player_is_active(thisP) && is_color_equal(player_color(thisP), col)) {
+			if (p != thisP && player_is_active(thisP) && color_is_equal(player_color(thisP), col)) {
 				break;
 			}
 		}

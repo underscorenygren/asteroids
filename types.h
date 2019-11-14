@@ -170,8 +170,8 @@ typedef enum ShipAction {
 	SHOOT = 5,
 } ShipAction;
 
-/* utility functions */
-bool is_color_equal(Color c1, Color c2) {
+/* utility functions that don't really belong in a .c file. */
+bool color_is_equal(Color c1, Color c2) {
 	return c1.r == c2.r &&
 		c1.g == c2.g &&
 		c1.b == c2.b;
