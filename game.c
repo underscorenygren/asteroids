@@ -15,21 +15,17 @@
 #include "object.c"
 #include "player.c"
 
-/*
- * true iff cooldown frames have passed since obj framecounter set.
- */
-bool game_is_object_in_cooldown(GameState *state, Object *obj, uint64_t cooldown) {
-	uint64_t now = state->framecounter;
-	int diff = now - obj->framecounter;
-	//NB first check handles overflow of uint in global frame counter
-	return !(now < obj->framecounter || diff > cooldown);
+/* INIT */
+
+/* initilaizes game and raylib */
+void game_init(GameState *state) {
+	SetTraceLogLevel(LOG_WARNING);
+	random_seed();
+	InitWindow(SCREEN_W, SCREEN_H, GAME_NAME);
+	SetTargetFPS(FPS);
 }
 
-/* sets welcome text counter to trigger welcome drawing. */
-void game_trigger_welcome(GameState *state) {
-	state->welcomeTextCooldown = WELCOME_TEXT_COOLDOWN;
-}
-
+/** GETTERS **/
 
 /* returns number of active players */
 uint32_t game_get_n_players(GameState *state) {
@@ -50,6 +46,23 @@ uint32_t game_get_n_objects(GameState *state, uint32_t type) {
 		}
 	}
 	return res;
+}
+
+/* gets player from a parsec guest. NULL if no match. */
+Player* game_get_player_from_guest(GameState *state, ParsecGuest *guest) {
+	for (uint32_t i = 0; i < MAX_PLAYERS; i++) {
+		Player *player = &state->players[i];
+		if (player_is_active(&state->players[i]) &&
+				player_is_guest(&state->players[i], guest)) {
+			return &state->players[i];
+		}
+	}
+	return NULL;
+}
+
+/* returns local player. */
+Player* game_get_local_player(GameState *state) {
+	return state->localPlayer;
 }
 
 /* returns player from an object.
@@ -80,7 +93,17 @@ Player* game_get_player_from_object(GameState *state, Object *obj) {
 	return NULL;
 }
 
-/* Object functions */
+/** CHECKS **/
+
+/*
+ * true iff cooldown frames have passed since obj framecounter set.
+ */
+bool game_is_object_in_cooldown(GameState *state, Object *obj, uint64_t cooldown) {
+	uint64_t now = state->framecounter;
+	int diff = now - obj->framecounter;
+	//NB first check handles overflow of uint in global frame counter
+	return !(now < obj->framecounter || diff > cooldown);
+}
 
 /* true iff object is a missile whose framecounter matches current state.
  * used to avoid collisions for newly spawned missiles.
@@ -90,6 +113,14 @@ bool game_is_newly_spawned_missile(GameState *state, Object *obj) {
 
 	return object_is_type(obj, MISSILE) && game_is_object_in_cooldown(state, obj, 1);
 }
+
+/* true iff there is a local player who is active. */
+bool game_is_local_player_active(GameState *state) {
+	Player *p = game_get_local_player(state);
+	return p != NULL && player_is_active(p);
+}
+
+/** GAME OBJECT GETTERS **/
 
 /* Iterates over active objects and finds first collider with o.
  * NULL if no collision.
@@ -127,6 +158,13 @@ Object* game_get_free_object(GameState *state) {
 		}
 	}
 	return obj;
+}
+
+/** GAME SETTERS/STATE-CHANGES **/
+
+/* sets welcome text counter to trigger welcome drawing. */
+void game_trigger_welcome(GameState *state) {
+	state->welcomeTextCooldown = WELCOME_TEXT_COOLDOWN;
 }
 
 /*
@@ -255,29 +293,6 @@ Player* game_add_player(GameState *state, ParsecGuest *guest) {
 	return NULL;
 }
 
-/* gets player from a parsec guest. NULL if no match. */
-Player* game_get_player_from_guest(GameState *state, ParsecGuest *guest) {
-	for (uint32_t i = 0; i < MAX_PLAYERS; i++) {
-		Player *player = &state->players[i];
-		if (player_is_active(&state->players[i]) &&
-				player_is_guest(&state->players[i], guest)) {
-			return &state->players[i];
-		}
-	}
-	return NULL;
-}
-
-/* returns local player. */
-Player* game_get_local_player(GameState *state) {
-	return state->localPlayer;
-}
-
-/* true iff there is a local player who is active. */
-bool game_is_local_player_active(GameState *state) {
-	Player *p = game_get_local_player(state);
-	return p != NULL && player_is_active(p);
-}
-
 /* removes a player from game. */
 bool game_remove_player(GameState *state, Player *p) {
 	if (p == NULL) {
@@ -287,7 +302,6 @@ bool game_remove_player(GameState *state, Player *p) {
 	player_deactivate(p);
 	return true;
 }
-
 
 /*
  * destroys object obj.
@@ -316,7 +330,7 @@ void game_destroy_object(GameState *state, Object *obj, Object *collider) {
 	}
 }
 
-/* handling functions */
+/** GAME HANDLERS **/
 
 /* advances objects and checks collisions.
  * We do a bunch of double loops here, but
@@ -610,13 +624,7 @@ void game_draw(GameState *state) {
 	EndDrawing();
 }
 
-/* initilaizes game, raylib. returns true iff there was an init error. */
-void game_init(GameState *state) {
-	SetTraceLogLevel(LOG_WARNING);
-	random_seed();
-	InitWindow(SCREEN_W, SCREEN_H, GAME_NAME);
-	SetTargetFPS(FPS);
-}
+/* DEINIT */
 
 /* deinitalizes game */
 void game_deinit(GameState *state) {
