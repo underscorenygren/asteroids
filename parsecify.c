@@ -27,6 +27,8 @@ void parsecify_submit_frame(Parsec *parsec) {
     ImageFlipVertical(&image);
     Texture2D tex = LoadTextureFromImage(image);
     ParsecHostGLSubmitFrame(parsec, tex.id);
+		UnloadImage(image);
+		UnloadTexture(tex);
 		ParsecFree(guests);
   } else {
 		DLOG("No guests");
