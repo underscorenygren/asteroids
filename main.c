@@ -1206,6 +1206,7 @@ int main(int argc, char *argv[])
 
     // De-Initialization
     //--------------------------------------------------------------------------------------
+    UnloadRenderTexture(canvas);
     CloseWindow();        // Close window and OpenGL context
     //--------------------------------------------------------------------------------------
 		kickGuests(&state, parsec);
