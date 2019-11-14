@@ -400,18 +400,30 @@ void object_advance(Object *obj) {
 
 	for (uint32_t i = 0; i < n; i++) {
 		Vector2 point = verts[i];
+		bool isOffscreen = false;
 		if (point.x < 0) {
 			object_set_x(obj, SCREEN_W - obj->w - buf);
-			return;
-		} else if (point.x > SCREEN_W) {
+			isOffscreen = true;
+		}
+		if (point.x > SCREEN_W) {
 			object_set_x(obj, buf);
-			return;
-		} else if (point.y < 0) {
+			isOffscreen = true;
+		}
+		if (point.y < 0) {
 			object_set_y(obj, SCREEN_H - obj->h - buf);
-			return;
-		} else if (point.y > SCREEN_H) {
+			isOffscreen = true;
+		}
+		if (point.y > SCREEN_H) {
 			object_set_y(obj, buf);
-			return;
+			isOffscreen = true;
+		}
+		if (isOffscreen) {
+			//we destroy missiles that wrap around, it gets out of hand.
+			//could do a decay instead, but I haven't bothered.
+			if (object_is_type(obj, MISSILE)) {
+				object_destroy(obj);
+			}
+			break; //no need for further checks
 		}
 	}
 }

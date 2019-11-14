@@ -220,23 +220,10 @@ Object *game_add_missile(GameState *state, Object *ship) {
 
 	//adds vector of ship length to mid point origin.
 	//this takes rotation of ship already into account
-	Vector2 startDirection = object_direction(ship);
+	Vector2 missileDirection = object_direction(ship);
 
-	float angleOffset = MISSILE_ANGLE_OFFSET;
-	//Rotate missiles by a fixed number to align with ship "front",
-	//which is not at 0.
-	Vector2 missileDirection = vector_rotate(startDirection, angleOffset);
-	//Vector2 missileDirection = randomDirection();
-
-	Vector2 dir = {
-		scaling * missileDirection.x,
-		scaling * missileDirection.y,
-	};
-
-	Vector2 pos = {
-		mid.x + dir.x,
-		mid.y + dir.y,
-	};
+	Vector2 pos = vector_add(mid,
+									vector_scale(missileDirection, scaling));
 
 	object_init(obj, MISSILE, object_speed(ship) + MISSILE_SPEED, missileDirection, MISSILE_SIZE, pos, 0, player_color(p));
 	obj->framecounter = state->framecounter;

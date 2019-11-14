@@ -33,21 +33,20 @@ const char* RESET_TEXT = "**wants[%d]reset**";
 const char* DISABLE_PARSEC = "noparsec";
 
 //Ship Settings
-const float SHIP_SPEED_ADJUSTMENT = 0.4;
-const float SHIP_ANGLE_ADJUSTMENT = 5.0f;
+const float SHIP_SPEED_ADJUSTMENT = 0.4; //chosen after playing around with options.
+const float SHIP_ANGLE_ADJUSTMENT = 5.0f; //ditto
 const uint32_t SHIP_MISSILE_COOLDOWN = 10; //NB: Measured in frames
 
 //ASTEROID Settings
-const uint32_t ASTEROID_MAX_SPEED = 8.0;
-const uint32_t N_START_ASTEROIDS = 5;
-const uint32_t MAX_ASTEROIDS = 30;
-const float EXPECTED_ASTEROIDS_PER_SEC = 3;
-const float ASTEROID_SPAWN_DRIVER = 0.05;
+const uint32_t ASTEROID_MAX_SPEED = 8.0; //asteroid speed is uniformly distributed between 0 and this value.
+const uint32_t N_START_ASTEROIDS = 5; //spawns on reset
+const uint32_t MAX_ASTEROIDS = 30; //no more asteroids after this number.
+const float EXPECTED_ASTEROIDS_PER_SEC = 3; //used to calculate probability of asteroid spawning.
+const float ASTEROID_SPAWN_DRIVER = 0.05; //percentage increase/decrease in asteroid prob as n asteroids deviate from midpoint.
 
 //MISSILE Settings
-const int MISSILE_SPEED = 20.0;
-const float MISSILE_RADIUS = 1.0;
-const float MISSILE_ANGLE_OFFSET = 0.0;
+const int MISSILE_SPEED = 20.0;  //chosen after some testing.
+const float MISSILE_RADIUS = 1.0; //want them small
 
 //Types & Sizes
 //These are really enums, but I got a bit lazy so they are just stored ints
@@ -60,8 +59,8 @@ typedef enum ObjectType {
 const uint32_t N_TYPES = 3; //used for destruction threshold.
 
 const Vector2 ASTEROID_SIZE = {35.0, 35.0};
-const Vector2 SHIP_SIZE = {20.0, 20.0};
-const Vector2 MISSILE_SIZE = {MISSILE_RADIUS, MISSILE_RADIUS};
+const Vector2 SHIP_SIZE = {20.0, 20.0};  //ship dimensions are a triangle fit inside this box, with midpoint in one corner and two sides.
+const Vector2 MISSILE_SIZE = {MISSILE_RADIUS, MISSILE_RADIUS}; //Missile is a circle, so h is redundant
 
 //We use types to index into, beware the segfault
 int DESTRUCTION_THRESHOLDS[N_TYPES+1] = {
@@ -101,6 +100,7 @@ typedef struct Object {
 	uint64_t framecounter;  //an overloaded field. Stores frame when relevant events happened.
   //for ships, when last shot was made (for throttling)
   //for missiles, when it was launched (to account for not hitting source).
+  //NB: this should be replaced with a better created_at + age system, but I haven't bothered.
 	Color col; //objects color
 } Object;
 
@@ -148,12 +148,12 @@ typedef struct Player {
  * bool bit set.
  */
 typedef struct GameState {
-	Player players[MAX_PLAYERS];
-	Object objs[MAX_OBJS];
-	uint64_t framecounter;
-	uint32_t welcomeTextCooldown;
-  Parsec *parsec;
-  Player *localPlayer;
+	Player players[MAX_PLAYERS]; //All players, active and inactive
+	Object objs[MAX_OBJS]; //All objects, active and inactive
+	uint64_t framecounter; //which frame we are on, used for timing instead of time.h
+	uint32_t welcomeTextCooldown; //used to track how long to show welcome text
+  Parsec *parsec; //active parsec instance
+  Player *localPlayer; //pointer to local player in player array, if spawned.
 } GameState;
 
 /*
@@ -177,7 +177,7 @@ bool color_is_equal(Color c1, Color c2) {
 		c1.b == c2.b;
 }
 
-//Pre-assign some functions that are needed by parsec and game.
+//Pre-define some functions that are needed by parsec and game.
 Player* game_get_player_from_guest(GameState *state, ParsecGuest *guest);
 Player* game_add_player(GameState *state, ParsecGuest *guest);
 bool game_remove_player(GameState *state, Player *p);
