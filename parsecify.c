@@ -4,6 +4,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <assert.h>
 
 #include "parsec.h"
 #include "raylib.h"
@@ -17,23 +18,26 @@ void parsecify_submit_frame(Parsec *parsec) {
 	}
 	DLOG("submit_frame");
 
-  ParsecGuest* guests;
-  ParsecHostGetGuests(parsec, GUEST_CONNECTED, &guests);
-  if (&guests[0] != NULL) {
+  ParsecGuest* guests = NULL; //@ronald: make this null to avoid corruption at free.
+  uint32_t n_guests = ParsecHostGetGuests(parsec, GUEST_CONNECTED, &guests);
+  if (n_guests > 0) {
 		DLOG("one guest connected");
+		assert(guests);
     Image image = GetScreenData();
     ImageFlipVertical(&image);
     Texture2D tex = LoadTextureFromImage(image);
     ParsecHostGLSubmitFrame(parsec, tex.id);
+		ParsecFree(guests);
   } else {
 		DLOG("No guests");
 	}
-	ParsecFree(guests);
 }
 
 /* adds/removes guests based on Parsec events.
  * Returns true iff player was added. */
 bool parsecify_state_change(GameState *state, ParsecGuest *guest) {
+	assert(state);
+	assert(guest);
 	bool playerAdded = false;
 	ILOG("guest state change %d %d %d", guest->state, GUEST_CONNECTED, GUEST_DISCONNECTED);
 	if (guest->state == GUEST_CONNECTED) {
@@ -56,6 +60,8 @@ bool parsecify_state_change(GameState *state, ParsecGuest *guest) {
 /* parsec event check loop. */
 bool parsecify_check_events(Parsec *parsec, GameState *state) {
 	bool playerAdded = false;
+	assert(parsec);
+	assert(state);
 	if (parsec != NULL) {
 		for (ParsecHostEvent event; ParsecHostPollEvents(parsec, 0, &event);) {
 			if (event.type == HOST_EVENT_GUEST_STATE_CHANGE)
@@ -70,6 +76,9 @@ bool parsecify_check_events(Parsec *parsec, GameState *state) {
 
 /* translates parsec input into player state */
 void parsecify_handle_input_message(GameState *state, ParsecGuest *guest, ParsecMessage *msg) {
+	assert(state);
+	assert(guest);
+	assert(msg);
 	Player *p = game_get_player_from_guest(state, guest);
 	bool pressed = false;
 
@@ -158,6 +167,7 @@ void parsecify_check_input(Parsec *parsec, GameState *state) {
 	if (parsec == NULL) {
 		return;
 	}
+	assert(state);
 	ParsecGuest guest;
 	for (ParsecMessage msg; ParsecHostPollInput(parsec, 0, &guest, &msg);) {
 		parsecify_handle_input_message(state, &guest, &msg);
@@ -166,6 +176,8 @@ void parsecify_check_input(Parsec *parsec, GameState *state) {
 
 /* kicks a player */
 void parsecify_kick_guest(Parsec *parsec, Player *player) {
+	assert(parsec);
+	assert(player);
 	if (player != NULL) {
 		ILOG("kicking player id: %d", player->guest.id);
 		ParsecHostKickGuest(parsec, player->guest.id);
@@ -180,6 +192,7 @@ bool parsecify_init(Parsec **parsec, char *session) {
 		ILOG("Couldn't init parsec");
 		return true;
 	}
+	assert(*parsec);
 
 	if (PARSEC_OK != ParsecHostStart(*parsec, HOST_GAME, NULL, session)) {
 		ILOG("Couldn't start hosting");
@@ -194,6 +207,7 @@ void parsecify_deinit(Parsec *parsec, GameState *state) {
 	if (parsec == NULL) {
 		return;
 	}
+	assert(state);
 
 	for (uint32_t i = 0; i < MAX_PLAYERS; i++) {
 		Player *player = &state->players[i];

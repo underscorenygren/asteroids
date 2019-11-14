@@ -16,7 +16,7 @@
 #include "player.c"
 
 /*
- * true iff cooldown frames have passed since obj framecounter was updated.
+ * true iff cooldown frames have passed since obj framecounter set.
  */
 bool game_is_object_in_cooldown(GameState *state, Object *obj, uint64_t cooldown) {
 	uint64_t now = state->framecounter;
@@ -81,6 +81,15 @@ Player* game_get_player_from_object(GameState *state, Object *obj) {
 
 /* Object functions */
 
+/* true iff object is a missile whose framecounter matches current state.
+ * used to avoid collisions for newly spawned missiles.
+ * */
+bool game_is_newly_spawned_missile(GameState *state, Object *obj) {
+	if (state == NULL || obj == NULL) { return false; }
+
+	return obj->type == MISSILE && game_is_object_in_cooldown(state, obj, 1);
+}
+
 /* Iterates over active objects and finds first collider with o.
  * NULL if no collision.
  */
@@ -89,7 +98,12 @@ Object* game_get_first_collider(GameState *state, Object *o) {
 		Object *oj = &state->objs[j];
 		if (o != oj && oj != NULL && oj->active) {
 			if (object_is_colliding(o, oj)) {
-				return oj;
+				if (game_is_newly_spawned_missile(state, o) ||
+						game_is_newly_spawned_missile(state, oj)) {
+					DLOG("newly spawned");
+				} else {
+					return oj;
+				}
 			}
 		}
 	}
@@ -107,7 +121,7 @@ Object* game_get_free_object(GameState *state) {
 		ref = &state->objs[i];
 		if (!ref->active) {
 			obj = ref;
-			*obj = EMPTY_OBJECT; //nulls object
+			object_clear(obj);
 			break;
 		}
 	}
@@ -186,8 +200,33 @@ Object *game_add_missile(GameState *state, Object *ship) {
 	};
 
 	object_init(obj, MISSILE, ship->speed + MISSILE_SPEED, missileDirection, MISSILE_SIZE, pos, 0, p->col);
+	obj->framecounter = state->framecounter;
 
 	return obj;
+}
+
+/* assigns a new color to dst. returns NULL and does no assignment if colors have run out */
+bool game_new_player_color(GameState *state, Player *p) {
+	uint32_t nPlayers = game_get_n_players(state);
+	uint32_t maxTries = 100;
+	if (nPlayers >= N_COLORS) {
+		return false;
+	}
+	for (uint32_t i = 0; i < maxTries; i++) {
+		Color col = COLORS[random_uint32_t(N_COLORS)];
+		uint32_t i = 0;
+		for (; i < MAX_PLAYERS; i++) {
+			Player *thisP = &state->players[i];
+			if (p != thisP && player_is_active(thisP) && is_color_equal(thisP->col, col)) {
+				break;
+			}
+		}
+		if (i == MAX_PLAYERS) { //successfully iterated through all players, color found
+			p->col = col;
+			return true;
+		}
+	}
+	return false;
 }
 
 /* Adds a player */
@@ -195,14 +234,19 @@ Player* game_add_player(GameState *state, ParsecGuest *guest) {
 	for (uint32_t i = 0; i < MAX_PLAYERS; i++) {
 		Player *p = &state->players[i];
 		if (!p->active) {
+			player_clear(p);
 			if (guest != NULL) {
 				p->guest = *guest;
 			}
-			p->col = COLORS[random_uint32_t(N_COLORS)];
+			if (!game_new_player_color(state, p)) {
+				DLOG("Couldn't assign player color");
+				return NULL;
+			}
 			Object *ship = game_add_object(state, SHIP, p->col);
 			p->ship = ship;
 			p->active = true;
 			if (ship == NULL) {
+				DLOG("couldn't allocate ship for player");
 				return NULL;
 			}
 
@@ -470,7 +514,7 @@ void game_handle_reset(GameState *state) {
 		Player *p = &state->players[i];
 		if (p->active) {
 			bool thisReset = player_is_reset_requested(p);
-			ILOG("player %i wants reset: %i", i, thisReset);
+			DLOG("player %i wants reset: %i", i, thisReset);
 			allWantReset = allWantReset && thisReset;
 		}
 	}
@@ -529,7 +573,7 @@ void game_handle_asteroid_spawn(GameState *state) {
 /* draws welcome if cooldown in effect */
 void game_draw_welcome(GameState *state) {
 	if (state->welcomeTextCooldown > 0) {
-		DrawText(WELCOME_TEXT, 0, 0, SCOREBOARD_FONT_SIZE, WHITE);
+		DrawText(WELCOME_TEXT, 0, 0, GAME_FONT_SIZE, WHITE);
 		state->welcomeTextCooldown--;
 	}
 }
@@ -548,7 +592,7 @@ void game_draw_scoreboard(GameState *state) {
 			float x = i * chunk + chunk/2;
 			const char *fmtString = player_is_reset_requested(p) ? RESET_TEXT : "%d";
 			snprintf(&text[0], 32, fmtString, p->score);
-			DrawText(text, x, SCOREBOARD_Y_OFFSET, SCOREBOARD_FONT_SIZE, p->col);
+			DrawText(text, x, SCOREBOARD_Y_OFFSET, GAME_FONT_SIZE, p->col);
 		}
 	}
 }

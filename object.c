@@ -29,18 +29,27 @@ char* object_type_string(Object *obj) {
 
 /* prints object using debug logger */
 void object_debug(Object *obj, char *msg) {
-	DLOG("[%s]:%s (%f, %f)->(%f, %f)@(%f)[%i]",
+	DLOG("[%s]:%s (%f, %f)->(%f, %f)o(%f)x[%i]@%llu",
 			object_type_string(obj),
 			msg,
 			obj->x, obj->y,
 			obj->direction.x, obj->direction.y,
 			obj->angle,
-			obj->destroyed);
+			obj->destroyed,
+			obj->framecounter);
 }
 
 /* prints object using info logger */
 void object_info(Object *obj) {
 	ILOG("[%s] (%f, %f)->(%f, %f)@(%f)", object_type_string(obj), obj->x, obj->y, obj->direction.x, obj->direction.y, obj->angle);
+}
+
+/* sets an object to 0 */
+void object_clear(Object *obj) {
+	Object empty = { 0 }; //tip from @cdd, sets whole struct to 0 values.
+	if (obj) {
+		*obj = empty;
+	}
 }
 
 /* initializes object by setting values in struct */
